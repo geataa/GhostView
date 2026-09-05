@@ -1,0 +1,27 @@
+# Build outputs & intermediate files
+bin/
+build/
+out/
+*.obj
+*.res
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# Track standalone portable executable
+!GhostView.exe
+
+# Test assets
+test_images/
+
+# Visual Studio & VS Code
+.vs/
+.vscode/
+*.user
+CMakeSettings.json
+
+# Operating System files
+Thumbs.db
+Desktop.ini
+.DS_Store
