@@ -145,6 +145,7 @@ void ViewerApp::UpdateDpiScale() {
     if (m_d2dContext) {
         m_hud.SetDpiScale(m_d2dContext, m_dpiScale);
         m_thumbBar.SetDpiScale(m_d2dContext, m_dpiScale);
+        m_cropToolbar.SetDpiScale(m_d2dContext, m_dpiScale);
     }
 }
 
@@ -173,6 +174,7 @@ bool ViewerApp::Initialize(HINSTANCE hInstance, int nCmdShow, const std::wstring
     }
 
     m_thumbBar.Initialize(m_d2dContext, m_dpiScale);
+    m_cropToolbar.Initialize(m_d2dContext, m_dpiScale);
 
     m_hud.SetFullscreenState(m_isFullscreen);
     m_hud.SetAspectMode(m_aspectMode);
@@ -509,6 +511,9 @@ void ViewerApp::SetAspectMode(AspectMode mode) {
 void ViewerApp::ToggleLanguage() {
     Localization::ToggleLanguage();
     SaveSettings();
+    if (m_d2dContext) {
+        m_cropToolbar.SetDpiScale(m_d2dContext, m_dpiScale);
+    }
     m_hud.ShowToast(Localization::Get(StringId::ToastLangSwitched));
     m_hud.ResetIdleTimer();
     Render();
@@ -680,12 +685,87 @@ void ViewerApp::ToggleCropMode() {
         if (m_imagePixels.empty() || m_imageWidth == 0 || m_imageHeight == 0) return;
         m_isCropping = true;
         m_isErasing = false;
+        m_activeCropRatio = CropRatio::Free;
+        m_isCropSymmetric = false;
+        m_cropToolbar.SetCropRatio(CropRatio::Free);
+        m_cropToolbar.SetSymmetric(false);
         m_cropNormRect = D2D1::RectF(0.08f, 0.08f, 0.92f, 0.92f);
         m_hud.SetCropActive(true);
         m_hud.SetEraseActive(false);
         m_hud.ShowToast(Localization::Get(StringId::ToastCropMode));
         Render();
     }
+}
+
+void ViewerApp::ResetCropBox() {
+    if (!m_isCropping || m_imageWidth == 0 || m_imageHeight == 0) return;
+    if (m_activeCropRatio == CropRatio::Free) {
+        m_cropNormRect = D2D1::RectF(0.08f, 0.08f, 0.92f, 0.92f);
+    } else {
+        SetCropAspectRatio(m_activeCropRatio);
+    }
+    m_hud.ShowToast(Localization::Get(StringId::ToastCropReset));
+    Render();
+}
+
+void ViewerApp::SetCropAspectRatio(CropRatio ratio) {
+    if (!m_isCropping || m_imageWidth == 0 || m_imageHeight == 0) return;
+
+    m_activeCropRatio = ratio;
+    m_cropToolbar.SetCropRatio(ratio);
+
+    if (ratio == CropRatio::Free) {
+        m_hud.ShowToast(Localization::Get(StringId::CropRatioFree));
+        Render();
+        return;
+    }
+
+    float targetAspect = 1.0f;
+    switch (ratio) {
+    case CropRatio::Original:
+        targetAspect = static_cast<float>(m_imageWidth) / static_cast<float>(m_imageHeight);
+        break;
+    case CropRatio::Ratio1x1:
+        targetAspect = 1.0f;
+        break;
+    case CropRatio::Ratio16x9:
+        targetAspect = 16.0f / 9.0f;
+        break;
+    case CropRatio::Ratio9x16:
+        targetAspect = 9.0f / 16.0f;
+        break;
+    case CropRatio::Ratio4x3:
+        targetAspect = 4.0f / 3.0f;
+        break;
+    case CropRatio::Ratio3x2:
+        targetAspect = 3.0f / 2.0f;
+        break;
+    default:
+        break;
+    }
+
+    float imgAspect = static_cast<float>(m_imageWidth) / static_cast<float>(m_imageHeight);
+    float k = targetAspect / (imgAspect > 0.0001f ? imgAspect : 1.0f);
+
+    float normW = 0.88f;
+    float normH = 0.88f;
+
+    if (k <= 1.0f) {
+        normH = 0.88f;
+        normW = normH * k;
+    } else {
+        normW = 0.88f;
+        normH = normW / k;
+    }
+
+    float left = 0.5f - normW / 2.0f;
+    float right = 0.5f + normW / 2.0f;
+    float top = 0.5f - normH / 2.0f;
+    float bottom = 0.5f + normH / 2.0f;
+
+    m_cropNormRect = D2D1::RectF(left, top, right, bottom);
+    m_hud.ShowToast(Localization::Get(StringId::ToastCropRatioSet));
+    Render();
 }
 
 void ViewerApp::ApplyCrop() {
@@ -1260,6 +1340,15 @@ void ViewerApp::Render() {
         m_imageInfoString
     );
 
+    // 5. Render Crop Toolbar if cropping is active
+    if (m_isCropping) {
+        m_cropToolbar.Render(
+            m_d2dContext,
+            static_cast<float>(m_screenWidth),
+            static_cast<float>(m_screenHeight)
+        );
+    }
+
     m_d2dContext->EndDraw();
 
     m_swapChain->Present(0, 0);
@@ -1332,6 +1421,11 @@ LRESULT ViewerApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             ScreenToClient(hwnd, &pt);
             float mx = static_cast<float>(pt.x);
             float my = static_cast<float>(pt.y);
+
+            if (m_isCropping && m_cropToolbar.IsMouseOver(mx, my)) {
+                SetCursor(LoadCursor(nullptr, IDC_ARROW));
+                return TRUE;
+            }
 
             if (m_isCropping && m_imageWidth > 0 && m_imageHeight > 0 && !m_hud.IsMouseOverHud(mx, my) && !m_thumbBar.IsMouseOver(mx, my)) {
                 float lNorm = (std::min)(m_cropNormRect.left, m_cropNormRect.right);
@@ -1411,6 +1505,7 @@ LRESULT ViewerApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         if (m_d2dContext) {
             m_hud.SetDpiScale(m_d2dContext, m_dpiScale);
             m_thumbBar.SetDpiScale(m_d2dContext, m_dpiScale);
+            m_cropToolbar.SetDpiScale(m_d2dContext, m_dpiScale);
         }
 
         if (m_isFullscreen) {
@@ -1474,36 +1569,10 @@ LRESULT ViewerApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             float dNormY = (imgScreenH > 1.0f) ? (dy / imgScreenH) : 0.0f;
 
             D2D1_RECT_F r = m_cropRectAtDragStart;
-            switch (m_activeCropHandle) {
-            case 0: // TL
-                r.left = std::clamp(r.left + dNormX, 0.0f, r.right - 0.02f);
-                r.top = std::clamp(r.top + dNormY, 0.0f, r.bottom - 0.02f);
-                break;
-            case 1: // TR
-                r.right = std::clamp(r.right + dNormX, r.left + 0.02f, 1.0f);
-                r.top = std::clamp(r.top + dNormY, 0.0f, r.bottom - 0.02f);
-                break;
-            case 2: // BR
-                r.right = std::clamp(r.right + dNormX, r.left + 0.02f, 1.0f);
-                r.bottom = std::clamp(r.bottom + dNormY, r.top + 0.02f, 1.0f);
-                break;
-            case 3: // BL
-                r.left = std::clamp(r.left + dNormX, 0.0f, r.right - 0.02f);
-                r.bottom = std::clamp(r.bottom + dNormY, r.top + 0.02f, 1.0f);
-                break;
-            case 4: // Top
-                r.top = std::clamp(r.top + dNormY, 0.0f, r.bottom - 0.02f);
-                break;
-            case 5: // Right
-                r.right = std::clamp(r.right + dNormX, r.left + 0.02f, 1.0f);
-                break;
-            case 6: // Bottom
-                r.bottom = std::clamp(r.bottom + dNormY, r.top + 0.02f, 1.0f);
-                break;
-            case 7: // Left
-                r.left = std::clamp(r.left + dNormX, 0.0f, r.right - 0.02f);
-                break;
-            case 8: { // Move whole box
+            bool isSymmetric = m_isCropSymmetric || ((GetKeyState(VK_MENU) & 0x8000) != 0);
+
+            if (m_activeCropHandle == 8) {
+                // Move whole box
                 float w = r.right - r.left;
                 float h = r.bottom - r.top;
                 float newL = std::clamp(r.left + dNormX, 0.0f, 1.0f - w);
@@ -1512,16 +1581,164 @@ LRESULT ViewerApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 r.top = newT;
                 r.right = newL + w;
                 r.bottom = newT + h;
-                break;
+            } else if (m_activeCropRatio == CropRatio::Free) {
+                if (isSymmetric) {
+                    float cx = (r.left + r.right) / 2.0f;
+                    float cy = (r.top + r.bottom) / 2.0f;
+                    float curHalfW = (r.right - r.left) / 2.0f;
+                    float curHalfH = (r.bottom - r.top) / 2.0f;
+                    float maxHalfW = (std::min)(cx, 1.0f - cx);
+                    float maxHalfH = (std::min)(cy, 1.0f - cy);
+
+                    float deltaX = 0.0f;
+                    float deltaY = 0.0f;
+                    switch (m_activeCropHandle) {
+                    case 0: deltaX = -dNormX; deltaY = -dNormY; break; // TL
+                    case 1: deltaX =  dNormX; deltaY = -dNormY; break; // TR
+                    case 2: deltaX =  dNormX; deltaY =  dNormY; break; // BR
+                    case 3: deltaX = -dNormX; deltaY =  dNormY; break; // BL
+                    case 4: deltaX = 0.0f;    deltaY = -dNormY; break; // Top
+                    case 5: deltaX =  dNormX; deltaY = 0.0f;    break; // Right
+                    case 6: deltaX = 0.0f;    deltaY =  dNormY; break; // Bottom
+                    case 7: deltaX = -dNormX; deltaY = 0.0f;    break; // Left
+                    }
+
+                    float newHalfW = (deltaX != 0.0f) ? std::clamp(curHalfW + deltaX, 0.02f, maxHalfW) : curHalfW;
+                    float newHalfH = (deltaY != 0.0f) ? std::clamp(curHalfH + deltaY, 0.02f, maxHalfH) : curHalfH;
+
+                    r.left = cx - newHalfW;
+                    r.right = cx + newHalfW;
+                    r.top = cy - newHalfH;
+                    r.bottom = cy + newHalfH;
+                } else {
+                    switch (m_activeCropHandle) {
+                    case 0: // TL
+                        r.left = std::clamp(r.left + dNormX, 0.0f, r.right - 0.02f);
+                        r.top = std::clamp(r.top + dNormY, 0.0f, r.bottom - 0.02f);
+                        break;
+                    case 1: // TR
+                        r.right = std::clamp(r.right + dNormX, r.left + 0.02f, 1.0f);
+                        r.top = std::clamp(r.top + dNormY, 0.0f, r.bottom - 0.02f);
+                        break;
+                    case 2: // BR
+                        r.right = std::clamp(r.right + dNormX, r.left + 0.02f, 1.0f);
+                        r.bottom = std::clamp(r.bottom + dNormY, r.top + 0.02f, 1.0f);
+                        break;
+                    case 3: // BL
+                        r.left = std::clamp(r.left + dNormX, 0.0f, r.right - 0.02f);
+                        r.bottom = std::clamp(r.bottom + dNormY, r.top + 0.02f, 1.0f);
+                        break;
+                    case 4: // Top
+                        r.top = std::clamp(r.top + dNormY, 0.0f, r.bottom - 0.02f);
+                        break;
+                    case 5: // Right
+                        r.right = std::clamp(r.right + dNormX, r.left + 0.02f, 1.0f);
+                        break;
+                    case 6: // Bottom
+                        r.bottom = std::clamp(r.bottom + dNormY, r.top + 0.02f, 1.0f);
+                        break;
+                    case 7: // Left
+                        r.left = std::clamp(r.left + dNormX, 0.0f, r.right - 0.02f);
+                        break;
+                    }
+                }
+            } else {
+                // Locked aspect ratio mode
+                float targetAspect = 1.0f;
+                switch (m_activeCropRatio) {
+                case CropRatio::Original:
+                    targetAspect = static_cast<float>(m_imageWidth) / static_cast<float>(m_imageHeight);
+                    break;
+                case CropRatio::Ratio1x1:  targetAspect = 1.0f; break;
+                case CropRatio::Ratio16x9: targetAspect = 16.0f / 9.0f; break;
+                case CropRatio::Ratio9x16: targetAspect = 9.0f / 16.0f; break;
+                case CropRatio::Ratio4x3:  targetAspect = 4.0f / 3.0f; break;
+                case CropRatio::Ratio3x2:  targetAspect = 3.0f / 2.0f; break;
+                default: break;
+                }
+                float imgAspect = static_cast<float>(m_imageWidth) / static_cast<float>(m_imageHeight);
+                float k = targetAspect / (imgAspect > 0.0001f ? imgAspect : 1.0f);
+
+                if (isSymmetric) {
+                    float cx = (r.left + r.right) / 2.0f;
+                    float cy = (r.top + r.bottom) / 2.0f;
+                    float maxHalfW = (std::min)(cx, 1.0f - cx);
+                    float maxHalfH = (std::min)(cy, 1.0f - cy);
+                    float maxH = (std::min)(maxHalfH, maxHalfW / k);
+                    float maxW = maxH * k;
+
+                    float delta = 0.0f;
+                    switch (m_activeCropHandle) {
+                    case 0: delta = (-dNormX - dNormY * k) / 2.0f; break; // TL
+                    case 1: delta = ( dNormX - dNormY * k) / 2.0f; break; // TR
+                    case 2: delta = ( dNormX + dNormY * k) / 2.0f; break; // BR
+                    case 3: delta = (-dNormX + dNormY * k) / 2.0f; break; // BL
+                    case 4: delta = -dNormY * k; break; // Top
+                    case 5: delta =  dNormX;     break; // Right
+                    case 6: delta =  dNormY * k; break; // Bottom
+                    case 7: delta = -dNormX;     break; // Left
+                    }
+
+                    float curHalfW = (r.right - r.left) / 2.0f;
+                    float newHalfW = std::clamp(curHalfW + delta, 0.02f, maxW);
+                    float newHalfH = newHalfW / k;
+
+                    r.left = cx - newHalfW;
+                    r.right = cx + newHalfW;
+                    r.top = cy - newHalfH;
+                    r.bottom = cy + newHalfH;
+                } else {
+                    float curW = r.right - r.left;
+                    switch (m_activeCropHandle) {
+                    case 2: // BR
+                    case 5: // Right
+                    case 6: { // Bottom
+                        float maxW = (std::min)(1.0f - r.left, (1.0f - r.top) * k);
+                        float delta = (m_activeCropHandle == 5) ? dNormX : (m_activeCropHandle == 6 ? dNormY * k : (dNormX + dNormY * k) / 2.0f);
+                        float newW = std::clamp(curW + delta, 0.02f, maxW);
+                        float newH = newW / k;
+                        r.right = r.left + newW;
+                        r.bottom = r.top + newH;
+                        break;
+                    }
+                    case 0: // TL
+                    case 4: // Top
+                    case 7: { // Left
+                        float maxW = (std::min)(r.right, r.bottom * k);
+                        float delta = (m_activeCropHandle == 7) ? -dNormX : (m_activeCropHandle == 4 ? -dNormY * k : (-dNormX - dNormY * k) / 2.0f);
+                        float newW = std::clamp(curW + delta, 0.02f, maxW);
+                        float newH = newW / k;
+                        r.left = r.right - newW;
+                        r.top = r.bottom - newH;
+                        break;
+                    }
+                    case 1: { // TR
+                        float maxW = (std::min)(1.0f - r.left, r.bottom * k);
+                        float newW = std::clamp(curW + (dNormX - dNormY * k) / 2.0f, 0.02f, maxW);
+                        float newH = newW / k;
+                        r.right = r.left + newW;
+                        r.top = r.bottom - newH;
+                        break;
+                    }
+                    case 3: { // BL
+                        float maxW = (std::min)(r.right, (1.0f - r.top) * k);
+                        float newW = std::clamp(curW + (-dNormX + dNormY * k) / 2.0f, 0.02f, maxW);
+                        float newH = newW / k;
+                        r.left = r.right - newW;
+                        r.bottom = r.top + newH;
+                        break;
+                    }
+                    }
+                }
             }
-            }
+
             m_cropNormRect = r;
             Render();
             return 0;
         }
 
         // Update hover state for 4-way arrow cursor and subtle glow
-        bool isHoverImg = IsPointInsideImage(mouseX, mouseY) && !m_hud.IsMouseOverHud(mouseX, mouseY) && !m_thumbBar.IsMouseOver(mouseX, mouseY);
+        bool isHoverImg = IsPointInsideImage(mouseX, mouseY) && !m_hud.IsMouseOverHud(mouseX, mouseY) && !m_thumbBar.IsMouseOver(mouseX, mouseY) && (!m_isCropping || !m_cropToolbar.IsMouseOver(mouseX, mouseY));
         if (m_isHoveringImage != isHoverImg) {
             m_isHoveringImage = isHoverImg;
             Render();
@@ -1535,8 +1752,12 @@ LRESULT ViewerApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         } else {
             m_hud.OnMouseMove(mouseX, mouseY);
             m_thumbBar.OnMouseMove(mouseX, mouseY);
-            if (m_hud.NeedsRedraw() || m_thumbBar.IsMouseOver(mouseX, mouseY)) {
+            if (m_isCropping) {
+                m_cropToolbar.OnMouseMove(mouseX, mouseY);
+            }
+            if (m_hud.NeedsRedraw() || m_thumbBar.IsMouseOver(mouseX, mouseY) || (m_isCropping && m_cropToolbar.NeedsRedraw())) {
                 m_hud.ClearNeedsRedraw();
+                if (m_isCropping) m_cropToolbar.ClearNeedsRedraw();
                 Render();
             }
         }
@@ -1546,6 +1767,13 @@ LRESULT ViewerApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
     case WM_LBUTTONDOWN: {
         float mouseX = static_cast<float>(GET_X_LPARAM(lParam));
         float mouseY = static_cast<float>(GET_Y_LPARAM(lParam));
+
+        if (m_isCropping && m_cropToolbar.IsMouseOver(mouseX, mouseY)) {
+            if (m_cropToolbar.OnMouseDown(mouseX, mouseY)) {
+                Render();
+                return 0;
+            }
+        }
 
         if (m_hud.IsMouseOverHud(mouseX, mouseY)) {
             m_hud.OnMouseDown(mouseX, mouseY);
@@ -1622,6 +1850,34 @@ LRESULT ViewerApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             ReleaseCapture();
         }
 
+        if (m_isCropping && m_cropToolbar.IsMouseOver(mouseX, mouseY)) {
+            CropRatio selectedRatio = CropRatio::Free;
+            CropAction cAction = m_cropToolbar.OnMouseUp(mouseX, mouseY, &selectedRatio);
+            switch (cAction) {
+            case CropAction::SetRatio:
+                SetCropAspectRatio(selectedRatio);
+                break;
+            case CropAction::ToggleSymmetric:
+                m_isCropSymmetric = !m_isCropSymmetric;
+                m_cropToolbar.SetSymmetric(m_isCropSymmetric);
+                m_hud.ShowToast(Localization::Get(m_isCropSymmetric ? StringId::ToastCropSymmetricOn : StringId::ToastCropSymmetricOff));
+                Render();
+                break;
+            case CropAction::Reset:
+                ResetCropBox();
+                break;
+            case CropAction::Apply:
+                ApplyCrop();
+                break;
+            case CropAction::Cancel:
+                CancelCrop();
+                break;
+            default:
+                break;
+            }
+            return 0;
+        }
+
         HudAction action = m_hud.OnMouseUp(mouseX, mouseY);
         switch (action) {
         case HudAction::Prev: PrevImage(); break;
@@ -1654,7 +1910,7 @@ LRESULT ViewerApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         float mouseX = static_cast<float>(GET_X_LPARAM(lParam));
         float mouseY = static_cast<float>(GET_Y_LPARAM(lParam));
 
-        if (m_hud.IsMouseOverHud(mouseX, mouseY) || m_thumbBar.IsMouseOver(mouseX, mouseY)) {
+        if (m_hud.IsMouseOverHud(mouseX, mouseY) || m_thumbBar.IsMouseOver(mouseX, mouseY) || (m_isCropping && m_cropToolbar.IsMouseOver(mouseX, mouseY))) {
             return 0;
         }
 
@@ -1707,6 +1963,15 @@ LRESULT ViewerApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case 'C':
             ToggleCropMode();
             return 0;
+        case 'S':
+            if (m_isCropping) {
+                m_isCropSymmetric = !m_isCropSymmetric;
+                m_cropToolbar.SetSymmetric(m_isCropSymmetric);
+                m_hud.ShowToast(Localization::Get(m_isCropSymmetric ? StringId::ToastCropSymmetricOn : StringId::ToastCropSymmetricOff));
+                Render();
+                return 0;
+            }
+            break;
         case 'E':
             ToggleEraseMode();
             return 0;

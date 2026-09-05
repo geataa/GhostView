@@ -13,6 +13,7 @@
 #include "HudRenderer.h"
 #include "ThumbnailBar.h"
 #include "Localization.h"
+#include "CropToolbar.h"
 
 class ViewerApp {
 public:
@@ -54,6 +55,8 @@ private:
     void ToggleCropMode();
     void ApplyCrop();
     void CancelCrop();
+    void SetCropAspectRatio(CropRatio ratio);
+    void ResetCropBox();
 
     void ToggleEraseMode();
     void MagicEraseAt(float screenX, float screenY, bool globalAll = false);
@@ -115,6 +118,7 @@ private:
     FolderNavigator m_folderNav;
     HudRenderer m_hud;
     ThumbnailBar m_thumbBar;
+    CropToolbar m_cropToolbar;
 
     // Current Image state & Pixel buffer
     ID2D1Bitmap1* m_currentBitmap = nullptr;
@@ -138,6 +142,8 @@ private:
     int m_activeCropHandle = -1;
     D2D1_POINT_2F m_cropDragStart = {};
     D2D1_RECT_F m_cropRectAtDragStart = {};
+    CropRatio m_activeCropRatio = CropRatio::Free;
+    bool m_isCropSymmetric = false;
 
     // Magic Eraser Tool state
     bool m_isErasing = false;

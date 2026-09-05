@@ -103,6 +103,37 @@ const wchar_t* Localization::Get(StringId id) {
     case StringId::ToastNoImage:
         return tr ? L"İşlem yapılacak resim yok!" : L"No image loaded!";
 
+    case StringId::CropRatioFree:
+        return tr ? L"Serbest" : L"Free";
+    case StringId::CropRatioOriginal:
+        return tr ? L"Orijinal" : L"Original";
+    case StringId::CropRatio1x1:
+        return L"1:1";
+    case StringId::CropRatio16x9:
+        return L"16:9";
+    case StringId::CropRatio9x16:
+        return L"9:16";
+    case StringId::CropRatio4x3:
+        return L"4:3";
+    case StringId::CropRatio3x2:
+        return L"3:2";
+    case StringId::CropSymmetric:
+        return tr ? L"Simetrik" : L"Symmetric";
+    case StringId::CropReset:
+        return tr ? L"Sıfırla" : L"Reset";
+    case StringId::CropApply:
+        return tr ? L"Onayla (Enter)" : L"Apply (Enter)";
+    case StringId::CropCancel:
+        return tr ? L"İptal (ESC)" : L"Cancel (ESC)";
+    case StringId::ToastCropSymmetricOn:
+        return tr ? L"Simetrik Boyutlandırma: Açık (Alt)" : L"Symmetric Sizing: ON (Alt)";
+    case StringId::ToastCropSymmetricOff:
+        return tr ? L"Simetrik Boyutlandırma: Kapalı" : L"Symmetric Sizing: OFF";
+    case StringId::ToastCropReset:
+        return tr ? L"Kırpma Alanı Sıfırlandı" : L"Crop Box Reset";
+    case StringId::ToastCropRatioSet:
+        return tr ? L"Kırpma Oranı Ayarlandı ve Ortalandı" : L"Crop Ratio Set & Centered";
+
     case StringId::DialogSaveTitle:
         return tr ? L"Resmi Farklı Kaydet (GhostView)" : L"Save Image As (GhostView)";
     case StringId::DialogSaveFilter:

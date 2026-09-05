@@ -44,6 +44,23 @@ enum class StringId {
     ToastLangSwitched,
     ToastNoImage,
 
+    // Crop Toolbar
+    CropRatioFree,
+    CropRatioOriginal,
+    CropRatio1x1,
+    CropRatio16x9,
+    CropRatio9x16,
+    CropRatio4x3,
+    CropRatio3x2,
+    CropSymmetric,
+    CropReset,
+    CropApply,
+    CropCancel,
+    ToastCropSymmetricOn,
+    ToastCropSymmetricOff,
+    ToastCropReset,
+    ToastCropRatioSet,
+
     DialogSaveTitle,
     DialogSaveFilter,
     DialogOpenTitle,

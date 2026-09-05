@@ -42,6 +42,7 @@ cl /nologo /W3 /O2 /MT /EHsc /std:c++17 /utf-8 ^
     src\HudRenderer.cpp ^
     src\ThumbnailBar.cpp ^
     src\Localization.cpp ^
+    src\CropToolbar.cpp ^
     bin\GhostView.res ^
     /Fe:bin\GhostView.exe ^
     /link /SUBSYSTEM:WINDOWS ^

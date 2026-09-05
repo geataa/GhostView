@@ -22,6 +22,8 @@ add_executable(GhostView WIN32
     src/ThumbnailBar.cpp
     src/Localization.h
     src/Localization.cpp
+    src/CropToolbar.h
+    src/CropToolbar.cpp
     GhostView.rc
 )
 
