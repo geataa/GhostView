@@ -20,6 +20,7 @@ extern "C" {
     void glEnable(unsigned int cap);
     void glDisable(unsigned int cap);
     void glBlendFunc(unsigned int sfactor, unsigned int dfactor);
+    void glBlendFuncSeparate(unsigned int sfactorRGB, unsigned int dfactorRGB, unsigned int sfactorAlpha, unsigned int dfactorAlpha);
     void glColor4f(float red, float green, float blue, float alpha);
     void glBegin(unsigned int mode);
     void glEnd();
@@ -39,6 +40,8 @@ extern "C" {
     void glScissor(int x, int y, int width, int height);
 }
 
+#define GL_ZERO             0
+#define GL_ONE              1
 #define GL_SCISSOR_TEST     0x0C11
 #define GL_COLOR_BUFFER_BIT 0x00004000
 #define GL_MODELVIEW        0x1700
@@ -217,7 +220,7 @@ void ID2D1DeviceContext::BeginDraw() {
     glLoadIdentity();
 
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_TEXTURE_2D);
 }
 
@@ -226,7 +229,7 @@ HRESULT ID2D1DeviceContext::EndDraw() {
 }
 
 void ID2D1DeviceContext::Clear(const D2D1_COLOR_F& c) {
-    glClearColor(c.r, c.g, c.b, c.a);
+    glClearColor(c.r * c.a, c.g * c.a, c.b * c.a, c.a);
     glClear(GL_COLOR_BUFFER_BIT);
 }
 

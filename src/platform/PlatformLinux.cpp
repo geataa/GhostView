@@ -79,6 +79,8 @@ union XEvent {
     long pad[24];
 };
 
+typedef void* GLXFBConfig;
+
 extern "C" {
     Display* XOpenDisplay(const char*);
     int XCloseDisplay(Display*);
@@ -109,6 +111,9 @@ extern "C" {
     int XFreeCursor(Display*, Cursor);
 
     GLXContext glXCreateContext(Display*, XVisualInfo*, GLXContext, int);
+    GLXFBConfig* glXChooseFBConfig(Display*, int, const int*, int*);
+    XVisualInfo* glXGetVisualFromFBConfig(Display*, GLXFBConfig);
+    GLXContext glXCreateNewContext(Display*, GLXFBConfig, int, GLXContext, int);
     int glXMakeCurrent(Display*, Window, GLXContext);
     void glXSwapBuffers(Display*, Window);
     void glXDestroyContext(Display*, GLXContext);
@@ -119,8 +124,14 @@ extern "C" {
 #define GLX_RED_SIZE 8
 #define GLX_GREEN_SIZE 8
 #define GLX_BLUE_SIZE 8
+#define GLX_ALPHA_SIZE 11
 #define GLX_DEPTH_SIZE 12
+#define GLX_RENDER_TYPE 0x8011
+#define GLX_RGBA_BIT 0x00000001
+#define GLX_RGBA_TYPE 0x8014
+
 #define AllocNone 0
+#define CWBackPixel (1L<<1)
 #define CWBorderPixel (1L<<3)
 #define CWColormap (1L<<13)
 #define CWEventMask (1L<<11)
@@ -213,19 +224,46 @@ bool PlatformLinux::Initialize(int width, int height, bool fullscreen) {
         m_isFullscreen = false;
     }
 
-    int glxAttribs[] = {
-        GLX_RGBA,
-        GLX_DOUBLEBUFFER,
+    int fbAttribs[] = {
+        GLX_RENDER_TYPE, GLX_RGBA_BIT,
+        GLX_DOUBLEBUFFER, 1,
         GLX_RED_SIZE, 8,
         GLX_GREEN_SIZE, 8,
         GLX_BLUE_SIZE, 8,
-        GLX_DEPTH_SIZE, 16,
+        GLX_ALPHA_SIZE, 8,
         0
     };
 
-    XVisualInfo* vi = glXChooseVisual(m_display, m_screen, glxAttribs);
+    int nConfigs = 0;
+    GLXFBConfig* cfgs = glXChooseFBConfig(m_display, m_screen, fbAttribs, &nConfigs);
+    GLXFBConfig bestCfg = nullptr;
+    XVisualInfo* vi = nullptr;
+
+    if (cfgs && nConfigs > 0) {
+        for (int i = 0; i < nConfigs; ++i) {
+            XVisualInfo* v = glXGetVisualFromFBConfig(m_display, cfgs[i]);
+            if (v && v->depth == 32) {
+                bestCfg = cfgs[i];
+                vi = v;
+                break;
+            }
+        }
+    }
+
     if (!vi) {
-        std::cerr << "Error: glXChooseVisual failed!\n";
+        int glxAttribs[] = {
+            GLX_RGBA,
+            GLX_DOUBLEBUFFER,
+            GLX_RED_SIZE, 8,
+            GLX_GREEN_SIZE, 8,
+            GLX_BLUE_SIZE, 8,
+            0
+        };
+        vi = glXChooseVisual(m_display, m_screen, glxAttribs);
+    }
+
+    if (!vi) {
+        std::cerr << "Error: No suitable X11 visual found!\n";
         return false;
     }
 
@@ -233,6 +271,7 @@ bool PlatformLinux::Initialize(int width, int height, bool fullscreen) {
     XSetWindowAttributes swa;
     std::memset(&swa, 0, sizeof(swa));
     swa.colormap = cmap;
+    swa.background_pixel = 0;
     swa.border_pixel = 0;
     swa.event_mask = ExposureMask | StructureNotifyMask | KeyPressMask | KeyReleaseMask |
                      ButtonPressMask | ButtonReleaseMask | PointerMotionMask;
@@ -249,7 +288,7 @@ bool PlatformLinux::Initialize(int width, int height, bool fullscreen) {
         posX, posY, m_width, m_height, 0,
         vi->depth, 1 /* InputOutput */,
         vi->visual,
-        CWBorderPixel | CWColormap | CWEventMask,
+        CWBackPixel | CWBorderPixel | CWColormap | CWEventMask,
         &swa
     );
 
@@ -268,6 +307,11 @@ bool PlatformLinux::Initialize(int width, int height, bool fullscreen) {
     Atom mwmAtom = XInternAtom(m_display, "_MOTIF_WM_HINTS", 0);
     XChangeProperty(m_display, m_window, mwmAtom, mwmAtom, 32, 0, (unsigned char*)&hints, 5);
 
+    // Keep compositing active (no bypass) so transparency works in fullscreen
+    Atom bypassAtom = XInternAtom(m_display, "_NET_WM_BYPASS_COMPOSITOR", 0);
+    unsigned long bypassValue = 2; // 2 = Do NOT bypass compositor (keeps transparency active!)
+    XChangeProperty(m_display, m_window, bypassAtom, 6 /* XA_CARDINAL */, 32, 0, (unsigned char*)&bypassValue, 1);
+
     // Set WM_DELETE_WINDOW protocol
     Atom wmDelete = XInternAtom(m_display, "WM_DELETE_WINDOW", 0);
     XSetWMProtocols(m_display, m_window, &wmDelete, 1);
@@ -282,7 +326,11 @@ bool PlatformLinux::Initialize(int width, int height, bool fullscreen) {
     XStoreName(m_display, m_window, "GhostView");
     XMapWindow(m_display, m_window);
 
-    m_glContext = glXCreateContext(m_display, vi, nullptr, 1);
+    if (bestCfg) {
+        m_glContext = glXCreateNewContext(m_display, bestCfg, GLX_RGBA_TYPE, nullptr, 1);
+    } else {
+        m_glContext = glXCreateContext(m_display, vi, nullptr, 1);
+    }
     if (!m_glContext) {
         std::cerr << "Error: glXCreateContext failed!\n";
         return false;
@@ -337,6 +385,12 @@ void PlatformLinux::SetFullscreen(bool fullscreen) {
 
     Window root = XRootWindow(m_display, m_screen);
     XSendEvent(m_display, root, 0, StructureNotifyMask, (XEvent*)&xclient);
+
+    // Keep compositor active in fullscreen so background remains transparent
+    Atom bypassAtom = XInternAtom(m_display, "_NET_WM_BYPASS_COMPOSITOR", 0);
+    unsigned long bypassVal = 2; // 2 = Don't bypass compositor
+    XChangeProperty(m_display, m_window, bypassAtom, 6 /* XA_CARDINAL */, 32, 0, (unsigned char*)&bypassVal, 1);
+
     XFlush(m_display);
 }
 
