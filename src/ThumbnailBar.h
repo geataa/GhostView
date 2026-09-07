@@ -1,7 +1,12 @@
 #pragma once
-#include <windows.h>
-#include <d2d1_2.h>
+#include "platform/PlatformDefs.h"
+#include "platform/D2DCompat.h"
+
+#if defined(_WIN32)
 #include <wincodec.h>
+#else
+typedef void IWICImagingFactory;
+#endif
 #include <string>
 #include <vector>
 #include <mutex>

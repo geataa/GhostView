@@ -1,11 +1,15 @@
 #include "ViewerApp.h"
-#include <windowsx.h>
-#include <commdlg.h>
-#include <shellapi.h>
 #include <sstream>
 #include <algorithm>
 #include <deque>
 #include <cmath>
+#include <fstream>
+#include <filesystem>
+
+#if defined(_WIN32)
+#include <windowsx.h>
+#include <commdlg.h>
+#include <shellapi.h>
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -17,6 +21,7 @@
 #pragma comment(lib, "advapi32.lib")
 
 static const wchar_t* CLASS_NAME = L"GhostViewWindowClass";
+#endif
 
 ViewerApp::ViewerApp() = default;
 
@@ -45,6 +50,7 @@ ViewerApp::~ViewerApp() {
         m_currentBitmap = nullptr;
     }
 
+#if defined(_WIN32)
     if (m_targetBitmap) m_targetBitmap->Release();
     if (m_d2dContext) m_d2dContext->Release();
     if (m_d2dDevice) m_d2dDevice->Release();
@@ -59,8 +65,19 @@ ViewerApp::~ViewerApp() {
     if (m_hwnd) {
         DestroyWindow(m_hwnd);
     }
+#else
+    if (m_d2dContext) {
+        m_d2dContext->Release();
+        m_d2dContext = nullptr;
+    }
+    if (m_platform) {
+        delete m_platform;
+        m_platform = nullptr;
+    }
+#endif
 }
 
+#if defined(_WIN32)
 void ViewerApp::LoadSettings() {
     // Default language is automatically detected from system UI
     Language defaultLang = Localization::DetectSystemLanguage();
@@ -148,7 +165,60 @@ void ViewerApp::UpdateDpiScale() {
         m_cropToolbar.SetDpiScale(m_d2dContext, m_dpiScale);
     }
 }
+#else
+void ViewerApp::LoadSettings() {
+    Language defaultLang = Localization::DetectSystemLanguage();
+    Localization::SetLanguage(defaultLang);
 
+    const char* home = getenv("HOME");
+    if (!home) return;
+    std::string configPath = std::string(home) + "/.config/ghostview/settings.conf";
+    std::ifstream f(configPath);
+    if (!f.is_open()) return;
+
+    std::string line;
+    while (std::getline(f, line)) {
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string key = line.substr(0, eq);
+        std::string val = line.substr(eq + 1);
+        if (key == "Language") {
+            int l = std::atoi(val.c_str());
+            Localization::SetLanguage(l == 1 ? Language::English : Language::Turkish);
+        } else if (key == "IsFullscreen") {
+            m_isFullscreen = (std::atoi(val.c_str()) != 0);
+        } else if (key == "BgOpacity") {
+            m_bgOpacity = std::atof(val.c_str());
+        }
+    }
+}
+
+void ViewerApp::SaveSettings() {
+    const char* home = getenv("HOME");
+    if (!home) return;
+    std::string dir = std::string(home) + "/.config/ghostview";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    std::string configPath = dir + "/settings.conf";
+    std::ofstream f(configPath);
+    if (f.is_open()) {
+        f << "Language=" << (Localization::GetCurrentLanguage() == Language::English ? 1 : 0) << "\n";
+        f << "IsFullscreen=" << (m_isFullscreen ? 1 : 0) << "\n";
+        f << "BgOpacity=" << m_bgOpacity << "\n";
+    }
+}
+
+void ViewerApp::UpdateDpiScale() {
+    m_dpiScale = 1.0f;
+    if (m_d2dContext) {
+        m_hud.SetDpiScale(m_d2dContext, m_dpiScale);
+        m_thumbBar.SetDpiScale(m_d2dContext, m_dpiScale);
+        m_cropToolbar.SetDpiScale(m_d2dContext, m_dpiScale);
+    }
+}
+#endif
+
+#if defined(_WIN32)
 bool ViewerApp::Initialize(HINSTANCE hInstance, int nCmdShow, const std::wstring& initialFile) {
     m_hInstance = hInstance;
 
@@ -488,6 +558,134 @@ void ViewerApp::ToggleFullscreen() {
 
     SaveSettings();
 }
+#else
+bool ViewerApp::Initialize(const std::wstring& initialFile) {
+    LoadSettings();
+
+    if (!m_imageLoader.Initialize()) {
+        return false;
+    }
+
+    m_platform = new PlatformLinux();
+    if (!m_platform->Initialize(1280, 720, m_isFullscreen)) {
+        return false;
+    }
+
+    m_platform->GetWindowSize(m_screenWidth, m_screenHeight);
+
+    if (!InitGraphics()) {
+        return false;
+    }
+
+    m_hud.Initialize(m_d2dContext, m_dpiScale);
+    m_thumbBar.Initialize(m_d2dContext, m_dpiScale);
+    m_cropToolbar.Initialize(m_d2dContext, m_dpiScale);
+
+    m_hud.SetFullscreenState(m_isFullscreen);
+    m_hud.SetAspectMode(m_aspectMode);
+
+    m_platform->onResize = [this](int w, int h) {
+        if (w > 0 && h > 0) {
+            ResizeBuffers(w, h);
+            UpdateDpiScale();
+            m_thumbBar.SetCurrentIndex(m_folderNav.GetCurrentIndex(), static_cast<float>(m_screenWidth));
+            ResetViewToFit();
+            Render();
+        }
+    };
+
+    m_platform->onPaint = [this]() {
+        Render();
+    };
+
+    m_platform->onUpdate = [this](float dt) {
+        OnUpdate(dt);
+    };
+
+    m_platform->onMouseMove = [this](float x, float y) {
+        OnMouseMove(x, y);
+    };
+
+    m_platform->onMouseDown = [this](int b, float x, float y, bool s, bool a, bool c) {
+        OnMouseDown(b, x, y, s, a, c);
+    };
+
+    m_platform->onMouseUp = [this](int b, float x, float y) {
+        OnMouseUp(b, x, y);
+    };
+
+    m_platform->onMouseWheel = [this](short d, float x, float y) {
+        OnMouseWheel(d, x, y);
+    };
+
+    m_platform->onKeyDown = [this](int k, wchar_t c, bool s, bool a, bool ct) {
+        OnKeyDown(k, c, s, a, ct);
+    };
+
+    m_platform->onFileDrop = [this](const std::wstring& path) {
+        m_folderNav.LoadFromInitialFile(path);
+        m_thumbBar.SetFileList(m_folderNav.GetAllFiles(), m_folderNav.GetCurrentIndex(), static_cast<float>(m_screenWidth));
+        LoadImage(path);
+    };
+
+    if (!initialFile.empty()) {
+        m_folderNav.LoadFromInitialFile(initialFile);
+        m_thumbBar.SetFileList(m_folderNav.GetAllFiles(), m_folderNav.GetCurrentIndex(), static_cast<float>(m_screenWidth));
+        LoadImage(initialFile);
+    } else {
+        m_folderNav.ScanFolder(L".");
+        m_thumbBar.SetFileList(m_folderNav.GetAllFiles(), m_folderNav.GetCurrentIndex(), static_cast<float>(m_screenWidth));
+        if (m_folderNav.HasImages()) {
+            LoadImage(m_folderNav.GetCurrentPath());
+        }
+    }
+
+    m_lastTick = 0;
+    Render();
+    return true;
+}
+
+bool ViewerApp::Initialize(HINSTANCE hInstance, int nCmdShow, const std::wstring& initialFile) {
+    (void)hInstance;
+    (void)nCmdShow;
+    return Initialize(initialFile);
+}
+
+bool ViewerApp::InitGraphics() {
+    m_d2dContext = new ID2D1DeviceContext();
+    m_d2dContext->SetViewport(m_screenWidth, m_screenHeight);
+
+    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(0.85f, 0.85f, 0.85f, 0.85f), &m_emptyPromptBrush);
+    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.16f), &m_shadowBrush);
+    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.45f), &m_selectionBorderBrush);
+
+    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.65f), &m_cropMaskBrush);
+    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.85f, 1.0f, 0.95f), &m_cropBorderBrush);
+    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.35f), &m_cropGridBrush);
+    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f), &m_cropHandleBrush);
+    return true;
+}
+
+void ViewerApp::ResizeBuffers(UINT width, UINT height) {
+    if (width == 0 || height == 0) return;
+    m_screenWidth = static_cast<int>(width);
+    m_screenHeight = static_cast<int>(height);
+    if (m_d2dContext) {
+        m_d2dContext->SetViewport(m_screenWidth, m_screenHeight);
+    }
+}
+
+void ViewerApp::ToggleFullscreen() {
+    m_isFullscreen = !m_isFullscreen;
+    if (m_platform) {
+        m_platform->SetFullscreen(m_isFullscreen);
+    }
+    m_hud.SetFullscreenState(m_isFullscreen);
+    SaveSettings();
+    ResetViewToFit();
+    Invalidate();
+}
+#endif
 
 void ViewerApp::CycleAspectMode() {
     switch (m_aspectMode) {
@@ -521,6 +719,11 @@ void ViewerApp::ToggleLanguage() {
 
 void ViewerApp::Invalidate() {
     m_needsRepaint = true;
+#if !defined(_WIN32)
+    if (m_platform) {
+        m_platform->Invalidate();
+    }
+#endif
 }
 
 void ViewerApp::LoadImage(const std::wstring& path) {
@@ -974,6 +1177,7 @@ void ViewerApp::SaveAs() {
         return;
     }
 
+#if defined(_WIN32)
     std::wstring currentPath = m_folderNav.GetCurrentPath();
     wchar_t szFile[MAX_PATH] = {};
     std::wstring defName = L"image_edited.png";
@@ -1015,6 +1219,29 @@ void ViewerApp::SaveAs() {
         }
         Render();
     }
+#else
+    if (!m_platform) return;
+    std::wstring savePath = m_platform->SaveFileDialog(Localization::Get(StringId::DialogSaveTitle), L"png");
+    if (!savePath.empty()) {
+        GUID format = GUID_ContainerFormatPng;
+        if (savePath.length() >= 4) {
+            std::wstring extLower = savePath.substr(savePath.length() - 4);
+            for (auto& c : extLower) c = towlower(c);
+            if (extLower == L".jpg" || (savePath.length() >= 5 && savePath.substr(savePath.length() - 5) == L".jpeg")) {
+                format = GUID_ContainerFormatJpeg;
+            }
+        }
+
+        if (m_imageLoader.SavePixelsToFile(savePath, m_imagePixels.data(), m_imageWidth, m_imageHeight, format)) {
+            m_folderNav.LoadFromInitialFile(savePath);
+            m_thumbBar.SetFileList(m_folderNav.GetAllFiles(), m_folderNav.GetCurrentIndex(), static_cast<float>(m_screenWidth));
+            m_hud.ShowToast(Localization::Get(StringId::ToastSavedSuccess));
+        } else {
+            m_hud.ShowToast(Localization::Get(StringId::ToastSavedError));
+        }
+        Render();
+    }
+#endif
 }
 
 float ViewerApp::CalculateFitScale() const {
@@ -1142,6 +1369,7 @@ void ViewerApp::LastImage() {
 }
 
 void ViewerApp::OpenFileDialog() {
+#if defined(_WIN32)
     wchar_t szFile[MAX_PATH] = { 0 };
     OPENFILENAMEW ofn = { sizeof(ofn) };
     ofn.hwndOwner = m_hwnd;
@@ -1156,6 +1384,15 @@ void ViewerApp::OpenFileDialog() {
         m_thumbBar.SetFileList(m_folderNav.GetAllFiles(), m_folderNav.GetCurrentIndex(), static_cast<float>(m_screenWidth));
         LoadImage(szFile);
     }
+#else
+    if (!m_platform) return;
+    std::wstring openPath = m_platform->OpenFileDialog(Localization::Get(StringId::DialogOpenTitle));
+    if (!openPath.empty()) {
+        m_folderNav.LoadFromInitialFile(openPath);
+        m_thumbBar.SetFileList(m_folderNav.GetAllFiles(), m_folderNav.GetCurrentIndex(), static_cast<float>(m_screenWidth));
+        LoadImage(openPath);
+    }
+#endif
 }
 
 bool ViewerApp::IsPointInsideImage(float x, float y) const {
@@ -1184,7 +1421,11 @@ bool ViewerApp::IsPointInsideImage(float x, float y) const {
 }
 
 void ViewerApp::Render() {
+#if defined(_WIN32)
     if (!m_d2dContext || !m_swapChain) return;
+#else
+    if (!m_d2dContext || !m_platform) return;
+#endif
 
     m_d2dContext->BeginDraw();
 
@@ -1351,33 +1592,29 @@ void ViewerApp::Render() {
 
     m_d2dContext->EndDraw();
 
+#if defined(_WIN32)
     m_swapChain->Present(0, 0);
+#else
+    if (m_platform) {
+        m_platform->SwapBuffers();
+    }
+#endif
     m_needsRepaint = false;
 }
 
 int ViewerApp::Run() {
+#if defined(_WIN32)
     MSG msg = {};
     while (GetMessageW(&msg, nullptr, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
     return static_cast<int>(msg.wParam);
-}
-
-LRESULT CALLBACK ViewerApp::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    ViewerApp* app = nullptr;
-    if (msg == WM_NCCREATE) {
-        auto cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
-        app = reinterpret_cast<ViewerApp*>(cs->lpCreateParams);
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
-    } else {
-        app = reinterpret_cast<ViewerApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+#else
+    while (m_platform && m_platform->PollEvents()) {
     }
-
-    if (app) {
-        return app->HandleMessage(hwnd, msg, wParam, lParam);
-    }
-    return DefWindowProcW(hwnd, msg, wParam, lParam);
+    return 0;
+#endif
 }
 
 static int HitTestCropHandles(float mouseX, float mouseY, float scrL, float scrT, float scrR, float scrB, float dpiScale) {
@@ -1402,6 +1639,23 @@ static int HitTestCropHandles(float mouseX, float mouseY, float scrL, float scrT
         return 8; // Move inside crop box
     }
     return -1;
+}
+
+#if defined(_WIN32)
+LRESULT CALLBACK ViewerApp::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    ViewerApp* app = nullptr;
+    if (msg == WM_NCCREATE) {
+        auto cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
+        app = reinterpret_cast<ViewerApp*>(cs->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
+    } else {
+        app = reinterpret_cast<ViewerApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    }
+
+    if (app) {
+        return app->HandleMessage(hwnd, msg, wParam, lParam);
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
 LRESULT ViewerApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -2077,4 +2331,527 @@ LRESULT ViewerApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
     }
 
     return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+#endif // _WIN32
+
+void ViewerApp::OnUpdate(float dt) {
+    m_hud.Update(dt);
+    m_thumbBar.Update(dt, m_d2dContext);
+
+    bool needsRepaint = m_hud.NeedsRedraw() || m_thumbBar.NeedsRedraw() || m_needsRepaint;
+
+    // Animate GIF playback
+    if (m_isGif && m_gifFrames.size() > 1) {
+        m_gifTimer += dt;
+        if (m_gifTimer >= m_gifFrames[m_currentGifFrame].delaySeconds) {
+            m_gifTimer = 0.0f;
+            m_currentGifFrame = (m_currentGifFrame + 1) % m_gifFrames.size();
+            m_currentBitmap = m_gifFrames[m_currentGifFrame].bitmap;
+            needsRepaint = true;
+        }
+    }
+
+    if (needsRepaint) {
+        m_hud.ClearNeedsRedraw();
+        m_thumbBar.ClearNeedsRedraw();
+        Render();
+    }
+}
+
+void ViewerApp::OnMouseMove(float mouseX, float mouseY) {
+#if !defined(_WIN32)
+    if (m_platform) {
+        if (m_isCropping && m_cropToolbar.IsMouseOver(mouseX, mouseY)) {
+            m_platform->SetCursor(LinuxCursor::Arrow);
+        } else if (m_isCropping && m_imageWidth > 0 && m_imageHeight > 0 && !m_hud.IsMouseOverHud(mouseX, mouseY) && !m_thumbBar.IsMouseOver(mouseX, mouseY)) {
+            float lNorm = (std::min)(m_cropNormRect.left, m_cropNormRect.right);
+            float rNorm = (std::max)(m_cropNormRect.left, m_cropNormRect.right);
+            float tNorm = (std::min)(m_cropNormRect.top, m_cropNormRect.bottom);
+            float bNorm = (std::max)(m_cropNormRect.top, m_cropNormRect.bottom);
+            D2D1_POINT_2F p0 = ImagePixelToScreen(lNorm * m_imageWidth, tNorm * m_imageHeight);
+            D2D1_POINT_2F p1 = ImagePixelToScreen(rNorm * m_imageWidth, bNorm * m_imageHeight);
+            float scrL = (std::min)(p0.x, p1.x);
+            float scrR = (std::max)(p0.x, p1.x);
+            float scrT = (std::min)(p0.y, p1.y);
+            float scrB = (std::max)(p0.y, p1.y);
+
+            int handle = HitTestCropHandles(mouseX, mouseY, scrL, scrT, scrR, scrB, m_dpiScale);
+            if (handle == 0 || handle == 2) m_platform->SetCursor(LinuxCursor::SizeNWSE);
+            else if (handle == 1 || handle == 3) m_platform->SetCursor(LinuxCursor::SizeNESW);
+            else if (handle == 4 || handle == 6) m_platform->SetCursor(LinuxCursor::SizeNS);
+            else if (handle == 5 || handle == 7) m_platform->SetCursor(LinuxCursor::SizeWE);
+            else if (handle == 8) m_platform->SetCursor(LinuxCursor::Move4Way);
+            else m_platform->SetCursor(LinuxCursor::Arrow);
+        } else if (m_isErasing && IsPointInsideImage(mouseX, mouseY) && !m_hud.IsMouseOverHud(mouseX, mouseY) && !m_thumbBar.IsMouseOver(mouseX, mouseY)) {
+            m_platform->SetCursor(LinuxCursor::Crosshair);
+        } else if (m_isDragging || (IsPointInsideImage(mouseX, mouseY) && !m_hud.IsMouseOverHud(mouseX, mouseY) && !m_thumbBar.IsMouseOver(mouseX, mouseY))) {
+            m_platform->SetCursor(LinuxCursor::Move4Way);
+        } else {
+            m_platform->SetCursor(LinuxCursor::Arrow);
+        }
+    }
+#endif
+
+    if (m_activeCropHandle >= 0 && m_imageWidth > 0 && m_imageHeight > 0) {
+        float dx = mouseX - m_cropDragStart.x;
+        float dy = mouseY - m_cropDragStart.y;
+        float imgScreenW = m_imageWidth * m_zoom;
+        float imgScreenH = m_imageHeight * m_zoom;
+        float dNormX = (imgScreenW > 1.0f) ? (dx / imgScreenW) : 0.0f;
+        float dNormY = (imgScreenH > 1.0f) ? (dy / imgScreenH) : 0.0f;
+
+        D2D1_RECT_F r = m_cropRectAtDragStart;
+        bool isSymmetric = m_isCropSymmetric;
+
+        if (m_activeCropHandle == 8) {
+            float w = r.right - r.left;
+            float h = r.bottom - r.top;
+            float newL = std::clamp(r.left + dNormX, 0.0f, 1.0f - w);
+            float newT = std::clamp(r.top + dNormY, 0.0f, 1.0f - h);
+            r.left = newL;
+            r.top = newT;
+            r.right = newL + w;
+            r.bottom = newT + h;
+        } else if (m_activeCropRatio == CropRatio::Free) {
+            if (isSymmetric) {
+                float cx = (r.left + r.right) / 2.0f;
+                float cy = (r.top + r.bottom) / 2.0f;
+                float curHalfW = (r.right - r.left) / 2.0f;
+                float curHalfH = (r.bottom - r.top) / 2.0f;
+                float maxHalfW = (std::min)(cx, 1.0f - cx);
+                float maxHalfH = (std::min)(cy, 1.0f - cy);
+
+                float deltaX = 0.0f;
+                float deltaY = 0.0f;
+                switch (m_activeCropHandle) {
+                case 0: deltaX = -dNormX; deltaY = -dNormY; break; // TL
+                case 1: deltaX =  dNormX; deltaY = -dNormY; break; // TR
+                case 2: deltaX =  dNormX; deltaY =  dNormY; break; // BR
+                case 3: deltaX = -dNormX; deltaY =  dNormY; break; // BL
+                case 4: deltaX = 0.0f;    deltaY = -dNormY; break; // Top
+                case 5: deltaX =  dNormX; deltaY = 0.0f;    break; // Right
+                case 6: deltaX = 0.0f;    deltaY =  dNormY; break; // Bottom
+                case 7: deltaX = -dNormX; deltaY = 0.0f;    break; // Left
+                }
+
+                float newHalfW = (deltaX != 0.0f) ? std::clamp(curHalfW + deltaX, 0.02f, maxHalfW) : curHalfW;
+                float newHalfH = (deltaY != 0.0f) ? std::clamp(curHalfH + deltaY, 0.02f, maxHalfH) : curHalfH;
+
+                r.left = cx - newHalfW;
+                r.right = cx + newHalfW;
+                r.top = cy - newHalfH;
+                r.bottom = cy + newHalfH;
+            } else {
+                switch (m_activeCropHandle) {
+                case 0: // TL
+                    r.left = std::clamp(r.left + dNormX, 0.0f, r.right - 0.02f);
+                    r.top = std::clamp(r.top + dNormY, 0.0f, r.bottom - 0.02f);
+                    break;
+                case 1: // TR
+                    r.right = std::clamp(r.right + dNormX, r.left + 0.02f, 1.0f);
+                    r.top = std::clamp(r.top + dNormY, 0.0f, r.bottom - 0.02f);
+                    break;
+                case 2: // BR
+                    r.right = std::clamp(r.right + dNormX, r.left + 0.02f, 1.0f);
+                    r.bottom = std::clamp(r.bottom + dNormY, r.top + 0.02f, 1.0f);
+                    break;
+                case 3: // BL
+                    r.left = std::clamp(r.left + dNormX, 0.0f, r.right - 0.02f);
+                    r.bottom = std::clamp(r.bottom + dNormY, r.top + 0.02f, 1.0f);
+                    break;
+                case 4: // Top
+                    r.top = std::clamp(r.top + dNormY, 0.0f, r.bottom - 0.02f);
+                    break;
+                case 5: // Right
+                    r.right = std::clamp(r.right + dNormX, r.left + 0.02f, 1.0f);
+                    break;
+                case 6: // Bottom
+                    r.bottom = std::clamp(r.bottom + dNormY, r.top + 0.02f, 1.0f);
+                    break;
+                case 7: // Left
+                    r.left = std::clamp(r.left + dNormX, 0.0f, r.right - 0.02f);
+                    break;
+                }
+            }
+        } else {
+            // Locked aspect ratio mode
+            float targetAspect = 1.0f;
+            switch (m_activeCropRatio) {
+            case CropRatio::Original:
+                targetAspect = static_cast<float>(m_imageWidth) / static_cast<float>(m_imageHeight);
+                break;
+            case CropRatio::Ratio1x1:  targetAspect = 1.0f; break;
+            case CropRatio::Ratio16x9: targetAspect = 16.0f / 9.0f; break;
+            case CropRatio::Ratio9x16: targetAspect = 9.0f / 16.0f; break;
+            case CropRatio::Ratio4x3:  targetAspect = 4.0f / 3.0f; break;
+            case CropRatio::Ratio3x2:  targetAspect = 3.0f / 2.0f; break;
+            default: break;
+            }
+            float imgAspect = static_cast<float>(m_imageWidth) / static_cast<float>(m_imageHeight);
+            float k = targetAspect / (imgAspect > 0.0001f ? imgAspect : 1.0f);
+
+            if (isSymmetric) {
+                float cx = (r.left + r.right) / 2.0f;
+                float cy = (r.top + r.bottom) / 2.0f;
+                float maxHalfW = (std::min)(cx, 1.0f - cx);
+                float maxHalfH = (std::min)(cy, 1.0f - cy);
+                float maxH = (std::min)(maxHalfH, maxHalfW / k);
+                float maxW = maxH * k;
+
+                float delta = 0.0f;
+                switch (m_activeCropHandle) {
+                case 0: delta = (-dNormX - dNormY * k) / 2.0f; break; // TL
+                case 1: delta = ( dNormX - dNormY * k) / 2.0f; break; // TR
+                case 2: delta = ( dNormX + dNormY * k) / 2.0f; break; // BR
+                case 3: delta = (-dNormX + dNormY * k) / 2.0f; break; // BL
+                case 4: delta = -dNormY * k; break; // Top
+                case 5: delta =  dNormX;     break; // Right
+                case 6: delta =  dNormY * k; break; // Bottom
+                case 7: delta = -dNormX;     break; // Left
+                }
+
+                float curHalfW = (r.right - r.left) / 2.0f;
+                float newHalfW = std::clamp(curHalfW + delta, 0.02f, maxW);
+                float newHalfH = newHalfW / k;
+
+                r.left = cx - newHalfW;
+                r.right = cx + newHalfW;
+                r.top = cy - newHalfH;
+                r.bottom = cy + newHalfH;
+            } else {
+                float curW = r.right - r.left;
+                switch (m_activeCropHandle) {
+                case 2: // BR
+                case 5: // Right
+                case 6: { // Bottom
+                    float maxW = (std::min)(1.0f - r.left, (1.0f - r.top) * k);
+                    float delta = (m_activeCropHandle == 5) ? dNormX : (m_activeCropHandle == 6 ? dNormY * k : (dNormX + dNormY * k) / 2.0f);
+                    float newW = std::clamp(curW + delta, 0.02f, maxW);
+                    float newH = newW / k;
+                    r.right = r.left + newW;
+                    r.bottom = r.top + newH;
+                    break;
+                }
+                case 0: // TL
+                case 4: // Top
+                case 7: { // Left
+                    float maxW = (std::min)(r.right, r.bottom * k);
+                    float delta = (m_activeCropHandle == 7) ? -dNormX : (m_activeCropHandle == 4 ? -dNormY * k : (-dNormX - dNormY * k) / 2.0f);
+                    float newW = std::clamp(curW + delta, 0.02f, maxW);
+                    float newH = newW / k;
+                    r.left = r.right - newW;
+                    r.top = r.bottom - newH;
+                    break;
+                }
+                case 1: { // TR
+                    float maxW = (std::min)(1.0f - r.left, r.bottom * k);
+                    float newW = std::clamp(curW + (dNormX - dNormY * k) / 2.0f, 0.02f, maxW);
+                    float newH = newW / k;
+                    r.right = r.left + newW;
+                    r.top = r.bottom - newH;
+                    break;
+                }
+                case 3: { // BL
+                    float maxW = (std::min)(r.right, (1.0f - r.top) * k);
+                    float newW = std::clamp(curW + (-dNormX + dNormY * k) / 2.0f, 0.02f, maxW);
+                    float newH = newW / k;
+                    r.left = r.right - newW;
+                    r.bottom = r.top + newH;
+                    break;
+                }
+                }
+            }
+        }
+
+        m_cropNormRect = r;
+        Render();
+        return;
+    }
+
+    bool isHoverImg = IsPointInsideImage(mouseX, mouseY) && !m_hud.IsMouseOverHud(mouseX, mouseY) && !m_thumbBar.IsMouseOver(mouseX, mouseY) && (!m_isCropping || !m_cropToolbar.IsMouseOver(mouseX, mouseY));
+    if (m_isHoveringImage != isHoverImg) {
+        m_isHoveringImage = isHoverImg;
+        Render();
+    }
+
+    if (m_isDragging) {
+        m_panX = m_dragStartPanX + (mouseX - m_dragStartMouse.x);
+        m_panY = m_dragStartPanY + (mouseY - m_dragStartMouse.y);
+        m_hud.ResetIdleTimer();
+        Render();
+    } else {
+        m_hud.OnMouseMove(mouseX, mouseY);
+        m_thumbBar.OnMouseMove(mouseX, mouseY);
+        if (m_isCropping) {
+            m_cropToolbar.OnMouseMove(mouseX, mouseY);
+        }
+        if (m_hud.NeedsRedraw() || m_thumbBar.IsMouseOver(mouseX, mouseY) || (m_isCropping && m_cropToolbar.NeedsRedraw())) {
+            m_hud.ClearNeedsRedraw();
+            if (m_isCropping) m_cropToolbar.ClearNeedsRedraw();
+            Render();
+        }
+    }
+}
+
+void ViewerApp::OnMouseDown(int button, float mouseX, float mouseY, bool shift, bool alt, bool ctrl) {
+    (void)alt;
+    (void)ctrl;
+    if (button != 0) return; // 0 = left button
+
+    if (m_isCropping && m_cropToolbar.IsMouseOver(mouseX, mouseY)) {
+        if (m_cropToolbar.OnMouseDown(mouseX, mouseY)) {
+            Render();
+            return;
+        }
+    }
+
+    if (m_hud.IsMouseOverHud(mouseX, mouseY)) {
+        m_hud.OnMouseDown(mouseX, mouseY);
+        Render();
+        return;
+    }
+
+    if (m_thumbBar.IsMouseOver(mouseX, mouseY)) {
+        int clickedIdx = m_thumbBar.OnMouseDown(mouseX, mouseY);
+        if (clickedIdx >= 0) {
+            m_folderNav.SetIndex(static_cast<size_t>(clickedIdx));
+            LoadImage(m_folderNav.GetCurrentPath());
+        }
+        return;
+    }
+
+    if (m_isCropping && m_imageWidth > 0 && m_imageHeight > 0) {
+        float lNorm = (std::min)(m_cropNormRect.left, m_cropNormRect.right);
+        float rNorm = (std::max)(m_cropNormRect.left, m_cropNormRect.right);
+        float tNorm = (std::min)(m_cropNormRect.top, m_cropNormRect.bottom);
+        float bNorm = (std::max)(m_cropNormRect.top, m_cropNormRect.bottom);
+        D2D1_POINT_2F p0 = ImagePixelToScreen(lNorm * m_imageWidth, tNorm * m_imageHeight);
+        D2D1_POINT_2F p1 = ImagePixelToScreen(rNorm * m_imageWidth, bNorm * m_imageHeight);
+        float scrL = (std::min)(p0.x, p1.x);
+        float scrR = (std::max)(p0.x, p1.x);
+        float scrT = (std::min)(p0.y, p1.y);
+        float scrB = (std::max)(p0.y, p1.y);
+
+        int handle = HitTestCropHandles(mouseX, mouseY, scrL, scrT, scrR, scrB, m_dpiScale);
+        if (handle >= 0) {
+            m_activeCropHandle = handle;
+            m_cropDragStart = D2D1::Point2F(mouseX, mouseY);
+            m_cropRectAtDragStart = m_cropNormRect;
+            return;
+        }
+    }
+
+    bool insideImage = IsPointInsideImage(mouseX, mouseY);
+
+    if (m_isErasing && insideImage) {
+        MagicEraseAt(mouseX, mouseY, shift);
+        return;
+    }
+
+    m_isDragging = true;
+    m_dragStartMouse.x = static_cast<LONG>(mouseX);
+    m_dragStartMouse.y = static_cast<LONG>(mouseY);
+    m_dragStartPanX = m_panX;
+    m_dragStartPanY = m_panY;
+}
+
+void ViewerApp::OnMouseUp(int button, float mouseX, float mouseY) {
+    if (button != 0) return;
+
+    if (m_activeCropHandle >= 0) {
+        m_activeCropHandle = -1;
+        return;
+    }
+
+    if (m_isDragging) {
+        m_isDragging = false;
+    }
+
+    if (m_isCropping && m_cropToolbar.IsMouseOver(mouseX, mouseY)) {
+        CropRatio selectedRatio = CropRatio::Free;
+        CropAction cAction = m_cropToolbar.OnMouseUp(mouseX, mouseY, &selectedRatio);
+        switch (cAction) {
+        case CropAction::SetRatio:
+            SetCropAspectRatio(selectedRatio);
+            break;
+        case CropAction::ToggleSymmetric:
+            m_isCropSymmetric = !m_isCropSymmetric;
+            m_cropToolbar.SetSymmetric(m_isCropSymmetric);
+            m_hud.ShowToast(Localization::Get(m_isCropSymmetric ? StringId::ToastCropSymmetricOn : StringId::ToastCropSymmetricOff));
+            Render();
+            break;
+        case CropAction::Reset:
+            ResetCropBox();
+            break;
+        case CropAction::Apply:
+            ApplyCrop();
+            break;
+        case CropAction::Cancel:
+            CancelCrop();
+            break;
+        default:
+            break;
+        }
+        return;
+    }
+
+    HudAction action = m_hud.OnMouseUp(mouseX, mouseY);
+    switch (action) {
+    case HudAction::Prev: PrevImage(); break;
+    case HudAction::Next: NextImage(); break;
+    case HudAction::ZoomIn: ZoomAt(1.25f, m_screenWidth / 2.0f, m_screenHeight / 2.0f); break;
+    case HudAction::ZoomOut: ZoomAt(1.0f / 1.25f, m_screenWidth / 2.0f, m_screenHeight / 2.0f); break;
+    case HudAction::CycleAspectMode: CycleAspectMode(); break;
+    case HudAction::ActualSize: SetActualSize(); Render(); break;
+    case HudAction::RotateLeft: Rotate(-90.0f); break;
+    case HudAction::RotateRight: Rotate(90.0f); break;
+    case HudAction::Crop: ToggleCropMode(); break;
+    case HudAction::MagicErase: ToggleEraseMode(); break;
+    case HudAction::AutoBgRemove: AutoRemoveBackground(); break;
+    case HudAction::Undo: Undo(); break;
+    case HudAction::SaveAs: SaveAs(); break;
+    case HudAction::ToggleLanguage: ToggleLanguage(); break;
+    case HudAction::ToggleFullscreen: ToggleFullscreen(); break;
+    case HudAction::Close:
+#if defined(_WIN32)
+        PostQuitMessage(0);
+#else
+        if (m_platform) m_platform->Shutdown();
+#endif
+        break;
+    default: break;
+    }
+
+    if (m_hud.NeedsRedraw()) {
+        m_hud.ClearNeedsRedraw();
+        Render();
+    }
+}
+
+void ViewerApp::OnMouseWheel(short delta, float mouseX, float mouseY) {
+    if (m_thumbBar.IsMouseOver(mouseX, mouseY)) {
+        m_thumbBar.OnMouseWheel(delta, static_cast<float>(m_screenWidth));
+        m_hud.ResetIdleTimer();
+        Render();
+        return;
+    }
+
+    float factor = (delta > 0) ? 1.15f : (1.0f / 1.15f);
+    ZoomAt(factor, mouseX, mouseY);
+}
+
+void ViewerApp::OnKeyDown(int keyCode, wchar_t keyChar, bool shift, bool alt, bool ctrl) {
+    (void)alt;
+    (void)shift;
+    m_hud.ResetIdleTimer();
+
+    if (ctrl) {
+        if (keyCode == 'S') {
+            SaveAs();
+            return;
+        } else if (keyCode == 'Z') {
+            Undo();
+            return;
+        }
+    }
+
+    switch (keyCode) {
+    case 'C':
+        ToggleCropMode();
+        return;
+    case 'S':
+        if (m_isCropping) {
+            m_isCropSymmetric = !m_isCropSymmetric;
+            m_cropToolbar.SetSymmetric(m_isCropSymmetric);
+            m_hud.ShowToast(Localization::Get(m_isCropSymmetric ? StringId::ToastCropSymmetricOn : StringId::ToastCropSymmetricOff));
+            Render();
+            return;
+        }
+        break;
+    case 'E':
+        ToggleEraseMode();
+        return;
+    case 'B':
+        AutoRemoveBackground();
+        return;
+    case 'T':
+        ToggleLanguage();
+        return;
+    case 27: // VK_ESCAPE
+        if (m_isCropping) {
+            CancelCrop();
+        } else if (m_isErasing) {
+            ToggleEraseMode();
+        } else {
+#if defined(_WIN32)
+            PostQuitMessage(0);
+#else
+            if (m_platform) m_platform->Shutdown();
+#endif
+        }
+        return;
+    case 122: // VK_F11
+        ToggleFullscreen();
+        return;
+    case 13: // VK_RETURN
+        if (m_isCropping) {
+            ApplyCrop();
+        } else {
+            ToggleFullscreen();
+        }
+        return;
+    case 'M':
+        CycleAspectMode();
+        return;
+    case 37: // VK_LEFT
+    case 'A':
+        PrevImage();
+        return;
+    case 39: // VK_RIGHT
+    case 'D':
+        NextImage();
+        return;
+    case 38: // VK_UP
+    case '+':
+    case '=':
+        ZoomAt(1.20f, m_screenWidth / 2.0f, m_screenHeight / 2.0f);
+        return;
+    case 40: // VK_DOWN
+    case '-':
+    case '_':
+        ZoomAt(1.0f / 1.20f, m_screenWidth / 2.0f, m_screenHeight / 2.0f);
+        return;
+    case 'R':
+        Rotate(90.0f);
+        return;
+    case 'L':
+        Rotate(-90.0f);
+        return;
+    case 'F':
+    case '0':
+        ResetViewToFit();
+        Render();
+        return;
+    case '1':
+        SetActualSize();
+        Render();
+        return;
+    case 'O':
+        OpenFileDialog();
+        return;
+    case 36: // VK_HOME
+        FirstImage();
+        return;
+    case 35: // VK_END
+        LastImage();
+        return;
+    }
+
+    if (keyChar == L'[') {
+        m_bgOpacity = (std::max)(0.10f, m_bgOpacity - 0.05f);
+        Render();
+    } else if (keyChar == L']') {
+        m_bgOpacity = (std::min)(0.98f, m_bgOpacity + 0.05f);
+        Render();
+    }
 }

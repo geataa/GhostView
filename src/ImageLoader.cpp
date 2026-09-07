@@ -1,4 +1,6 @@
 #include "ImageLoader.h"
+
+#if defined(_WIN32)
 #include <propvarutil.h>
 
 #pragma comment(lib, "windowscodecs.lib")
@@ -472,3 +474,228 @@ bool ImageLoader::SavePixelsToFile(
 
     return SUCCEEDED(hr);
 }
+
+#else
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "../third_party/stb/stb_image.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "../third_party/stb/stb_image_write.h"
+#include <fstream>
+#include <algorithm>
+
+ImageLoader::ImageLoader() = default;
+ImageLoader::~ImageLoader() = default;
+
+bool ImageLoader::Initialize() {
+    return true;
+}
+
+WICBitmapTransformOptions ImageLoader::GetExifOrientationTransform(IWICBitmapFrameDecode*) {
+    return WICBitmapTransformRotate0;
+}
+
+float ImageLoader::GetFrameDelay(IWICBitmapFrameDecode*) {
+    return 0.1f;
+}
+
+bool ImageLoader::LoadImageFromFile(
+    ID2D1DeviceContext* d2dContext,
+    const std::wstring& filePath,
+    ID2D1Bitmap1** outBitmap,
+    UINT* outWidth,
+    UINT* outHeight,
+    std::vector<FrameData>* outFrames,
+    std::vector<uint32_t>* outPixels
+) {
+    if (!d2dContext || !outBitmap) return false;
+    *outBitmap = nullptr;
+    if (outWidth) *outWidth = 0;
+    if (outHeight) *outHeight = 0;
+    if (outFrames) outFrames->clear();
+    if (outPixels) outPixels->clear();
+
+    std::string pathUtf8 = WideToUtf8(filePath);
+
+    // Read file into memory buffer
+    std::ifstream file(pathUtf8, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) return false;
+    size_t fileSize = file.tellg();
+    if (fileSize == 0) return false;
+    file.seekg(0, std::ios::beg);
+    std::vector<unsigned char> buffer(fileSize);
+    file.read((char*)buffer.data(), fileSize);
+
+    // Check GIF header: "GIF87a" or "GIF89a"
+    bool isGif = (fileSize >= 6 && buffer[0] == 'G' && buffer[1] == 'I' && buffer[2] == 'F' &&
+                  buffer[3] == '8' && (buffer[4] == '7' || buffer[4] == '9') && buffer[5] == 'a');
+
+    if (isGif && outFrames) {
+        int* delays = nullptr;
+        int x = 0, y = 0, z = 0, comp = 0;
+        unsigned char* framesData = stbi_load_gif_from_memory(
+            buffer.data(), (int)buffer.size(), &delays, &x, &y, &z, &comp, 4
+        );
+
+        if (framesData && z > 0 && x > 0 && y > 0) {
+            if (outWidth) *outWidth = x;
+            if (outHeight) *outHeight = y;
+
+            D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(
+                D2D1_BITMAP_OPTIONS_NONE,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+            );
+
+            size_t frameStride = x * 4;
+            size_t frameByteSize = frameStride * y;
+
+            for (int f = 0; f < z; ++f) {
+                const unsigned char* src = framesData + f * frameByteSize;
+                std::vector<uint32_t> framePixels(x * y);
+
+                for (int i = 0; i < x * y; ++i) {
+                    uint32_t r = src[i * 4 + 0];
+                    uint32_t g = src[i * 4 + 1];
+                    uint32_t b = src[i * 4 + 2];
+                    uint32_t a = src[i * 4 + 3];
+                    if (a < 255) {
+                        r = (r * a) / 255;
+                        g = (g * a) / 255;
+                        b = (b * a) / 255;
+                    }
+                    framePixels[i] = (a << 24) | (r << 16) | (g << 8) | b;
+                }
+
+                ID2D1Bitmap1* frameBmp = nullptr;
+                d2dContext->CreateBitmap(D2D1::SizeU(x, y), framePixels.data(), (UINT)frameStride, bp, &frameBmp);
+
+                float delay = (delays && delays[f] > 0) ? (delays[f] / 1000.0f) : 0.1f;
+                if (delay < 0.02f) delay = 0.1f;
+
+                outFrames->push_back({ frameBmp, delay });
+
+                if (f == 0) {
+                    *outBitmap = frameBmp;
+                    if (outPixels) {
+                        *outPixels = framePixels;
+                    }
+                }
+            }
+
+            if (delays) free(delays);
+            stbi_image_free(framesData);
+            return (*outBitmap != nullptr);
+        }
+        if (framesData) stbi_image_free(framesData);
+        if (delays) free(delays);
+    }
+
+    // Static image load
+    int w = 0, h = 0, c = 0;
+    unsigned char* img = stbi_load_from_memory(buffer.data(), (int)buffer.size(), &w, &h, &c, 4);
+    if (!img || w <= 0 || h <= 0) {
+        if (img) stbi_image_free(img);
+        return false;
+    }
+
+    if (outWidth) *outWidth = w;
+    if (outHeight) *outHeight = h;
+
+    std::vector<uint32_t> pixels(w * h);
+    for (int i = 0; i < w * h; ++i) {
+        uint32_t r = img[i * 4 + 0];
+        uint32_t g = img[i * 4 + 1];
+        uint32_t b = img[i * 4 + 2];
+        uint32_t a = img[i * 4 + 3];
+        if (a < 255) {
+            r = (r * a) / 255;
+            g = (g * a) / 255;
+            b = (b * a) / 255;
+        }
+        pixels[i] = (a << 24) | (r << 16) | (g << 8) | b;
+    }
+
+    stbi_image_free(img);
+
+    D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+    );
+
+    UINT stride = w * 4;
+    HRESULT hr = d2dContext->CreateBitmap(D2D1::SizeU(w, h), pixels.data(), stride, bp, outBitmap);
+    if (SUCCEEDED(hr) && *outBitmap) {
+        if (outPixels) {
+            *outPixels = std::move(pixels);
+        }
+        return true;
+    }
+
+    return false;
+}
+
+bool ImageLoader::SavePixelsToFile(
+    const std::wstring& filePath,
+    const uint32_t* pixels,
+    UINT width,
+    UINT height,
+    GUID containerFormat
+) {
+    if (!pixels || width == 0 || height == 0) return false;
+    std::string pathUtf8 = WideToUtf8(filePath);
+
+    if (containerFormat == GUID_ContainerFormatJpeg) {
+        // Convert to RGB24 composited over white background
+        std::vector<unsigned char> rgb(width * height * 3);
+        for (UINT i = 0; i < width * height; ++i) {
+            uint32_t px = pixels[i];
+            unsigned char b = static_cast<unsigned char>(px & 0xFF);
+            unsigned char g = static_cast<unsigned char>((px >> 8) & 0xFF);
+            unsigned char r = static_cast<unsigned char>((px >> 16) & 0xFF);
+            unsigned char a = static_cast<unsigned char>((px >> 24) & 0xFF);
+
+            if (a == 0) {
+                rgb[i * 3 + 0] = 255;
+                rgb[i * 3 + 1] = 255;
+                rgb[i * 3 + 2] = 255;
+            } else if (a < 255) {
+                float af = a / 255.0f;
+                rgb[i * 3 + 0] = static_cast<unsigned char>((std::min)(255.0f, r + (1.0f - af) * 255.0f));
+                rgb[i * 3 + 1] = static_cast<unsigned char>((std::min)(255.0f, g + (1.0f - af) * 255.0f));
+                rgb[i * 3 + 2] = static_cast<unsigned char>((std::min)(255.0f, b + (1.0f - af) * 255.0f));
+            } else {
+                rgb[i * 3 + 0] = r;
+                rgb[i * 3 + 1] = g;
+                rgb[i * 3 + 2] = b;
+            }
+        }
+        return stbi_write_jpg(pathUtf8.c_str(), (int)width, (int)height, 3, rgb.data(), 95) != 0;
+    } else {
+        // PNG format: straight RGBA
+        std::vector<unsigned char> rgba(width * height * 4);
+        for (UINT i = 0; i < width * height; ++i) {
+            uint32_t px = pixels[i];
+            unsigned char b = static_cast<unsigned char>(px & 0xFF);
+            unsigned char g = static_cast<unsigned char>((px >> 8) & 0xFF);
+            unsigned char r = static_cast<unsigned char>((px >> 16) & 0xFF);
+            unsigned char a = static_cast<unsigned char>((px >> 24) & 0xFF);
+
+            if (a > 0 && a < 255) {
+                float af = 255.0f / a;
+                rgba[i * 4 + 0] = static_cast<unsigned char>((std::min)(255.0f, r * af));
+                rgba[i * 4 + 1] = static_cast<unsigned char>((std::min)(255.0f, g * af));
+                rgba[i * 4 + 2] = static_cast<unsigned char>((std::min)(255.0f, b * af));
+                rgba[i * 4 + 3] = a;
+            } else {
+                rgba[i * 4 + 0] = r;
+                rgba[i * 4 + 1] = g;
+                rgba[i * 4 + 2] = b;
+                rgba[i * 4 + 3] = a;
+            }
+        }
+        return stbi_write_png(pathUtf8.c_str(), (int)width, (int)height, 4, rgba.data(), (int)(width * 4)) != 0;
+    }
+}
+
+#endif
+

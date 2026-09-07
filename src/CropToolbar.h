@@ -1,7 +1,6 @@
 #pragma once
-#include <windows.h>
-#include <d2d1_2.h>
-#include <dwrite.h>
+#include "platform/PlatformDefs.h"
+#include "platform/D2DCompat.h"
 #include <string>
 #include <vector>
 

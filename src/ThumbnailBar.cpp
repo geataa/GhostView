@@ -188,12 +188,17 @@ void ThumbnailBar::SetCurrentIndex(size_t index, float screenWidth) {
     m_needsRedraw = true;
 }
 
+#if !defined(_WIN32)
+#include "../third_party/stb/stb_image.h"
+#endif
+
 bool ThumbnailBar::GenerateThumbnail(
     IWICImagingFactory* factory,
     const std::wstring& path,
     UINT targetH,
     ThumbnailData& outData
 ) {
+#if defined(_WIN32)
     if (!factory) return false;
 
     IWICBitmapDecoder* decoder = nullptr;
@@ -271,9 +276,60 @@ bool ThumbnailBar::GenerateThumbnail(
 
     decoder->Release();
     return success;
+#else
+    (void)factory;
+    std::string pathUtf8 = WideToUtf8(path);
+    int origW = 0, origH = 0, channels = 0;
+    unsigned char* img = stbi_load(pathUtf8.c_str(), &origW, &origH, &channels, 4);
+    if (!img || origW <= 0 || origH <= 0) {
+        if (img) stbi_image_free(img);
+        return false;
+    }
+
+    UINT targetW = (origW * targetH) / origH;
+    if (targetW < targetH / 2) targetW = targetH / 2;
+    if (targetW > targetH * 2) targetW = targetH * 2;
+
+    outData.width = targetW;
+    outData.height = targetH;
+    outData.filePath = path;
+    outData.pixels.resize(targetW * targetH * 4);
+
+    for (UINT y = 0; y < targetH; ++y) {
+        float srcY = (y + 0.5f) * (float)origH / (float)targetH - 0.5f;
+        int y0 = std::clamp((int)std::floor(srcY), 0, origH - 1);
+        int y1 = std::clamp(y0 + 1, 0, origH - 1);
+        float fy = srcY - y0;
+
+        for (UINT x = 0; x < targetW; ++x) {
+            float srcX = (x + 0.5f) * (float)origW / (float)targetW - 0.5f;
+            int x0 = std::clamp((int)std::floor(srcX), 0, origW - 1);
+            int x1 = std::clamp(x0 + 1, 0, origW - 1);
+            float fx = srcX - x0;
+
+            const unsigned char* p00 = img + (y0 * origW + x0) * 4;
+            const unsigned char* p10 = img + (y0 * origW + x1) * 4;
+            const unsigned char* p01 = img + (y1 * origW + x0) * 4;
+            const unsigned char* p11 = img + (y1 * origW + x1) * 4;
+
+            unsigned char* dst = &outData.pixels[(y * targetW + x) * 4];
+            for (int c = 0; c < 4; ++c) {
+                float top = p00[c] * (1.0f - fx) + p10[c] * fx;
+                float bot = p01[c] * (1.0f - fx) + p11[c] * fx;
+                float val = top * (1.0f - fy) + bot * fy;
+                int dstIdx = (c == 0) ? 2 : ((c == 2) ? 0 : c); // RGBA -> BGRA
+                dst[dstIdx] = static_cast<unsigned char>(std::clamp(val, 0.0f, 255.0f));
+            }
+        }
+    }
+
+    stbi_image_free(img);
+    return true;
+#endif
 }
 
 void ThumbnailBar::WorkerLoop() {
+#if defined(_WIN32)
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
     IWICImagingFactory* localFactory = nullptr;
@@ -283,6 +339,9 @@ void ThumbnailBar::WorkerLoop() {
         CLSCTX_INPROC_SERVER,
         IID_PPV_ARGS(&localFactory)
     );
+#else
+    void* localFactory = (void*)1;
+#endif
 
     while (!m_stopWorker) {
         size_t nextIndex = 0;
@@ -313,12 +372,14 @@ void ThumbnailBar::WorkerLoop() {
         }
     }
 
+#if defined(_WIN32)
     if (localFactory) {
         localFactory->Release();
         localFactory = nullptr;
     }
 
     CoUninitialize();
+#endif
 }
 
 void ThumbnailBar::Update(float deltaTimeSeconds, ID2D1DeviceContext* d2dContext) {

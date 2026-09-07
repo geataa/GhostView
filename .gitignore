@@ -2,6 +2,7 @@
 bin/
 build/
 out/
+*.o
 *.obj
 *.res
 *.pdb
@@ -11,6 +12,7 @@ out/
 
 # Track standalone portable executable
 !GhostView.exe
+!GhostView
 
 # Test assets
 test_images/

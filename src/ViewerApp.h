@@ -1,9 +1,15 @@
 #pragma once
-#include <windows.h>
+#include "platform/PlatformDefs.h"
+#include "platform/D2DCompat.h"
+
+#if defined(_WIN32)
 #include <d3d11_1.h>
 #include <dxgi1_3.h>
-#include <d2d1_2.h>
 #include <dcomp.h>
+#else
+#include "platform/PlatformLinux.h"
+#endif
+
 #include <string>
 #include <vector>
 #include <memory>
@@ -21,14 +27,28 @@ public:
     ~ViewerApp();
 
     bool Initialize(HINSTANCE hInstance, int nCmdShow, const std::wstring& initialFile);
+#if !defined(_WIN32)
+    bool Initialize(const std::wstring& initialFile);
+#endif
     int Run();
 
+#if defined(_WIN32)
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+#endif
+
+    // Platform-independent event handling
+    void OnMouseMove(float mouseX, float mouseY);
+    void OnMouseDown(int button, float mouseX, float mouseY, bool shift, bool alt, bool ctrl);
+    void OnMouseUp(int button, float mouseX, float mouseY);
+    void OnMouseWheel(short delta, float mouseX, float mouseY);
+    void OnKeyDown(int keyCode, wchar_t keyChar, bool shift, bool alt, bool ctrl);
+    void OnUpdate(float dt);
 
 private:
+#if defined(_WIN32)
     LRESULT HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
     bool CreateAppWindow(HINSTANCE hInstance);
+#endif
     bool InitGraphics();
     void ResizeBuffers(UINT width, UINT height);
 
@@ -79,8 +99,12 @@ private:
     void SaveSettings();
 
 private:
+#if defined(_WIN32)
     HINSTANCE m_hInstance = nullptr;
     HWND m_hwnd = nullptr;
+#else
+    PlatformLinux* m_platform = nullptr;
+#endif
     int m_screenX = 0;
     int m_screenY = 0;
     int m_screenWidth = 1920;
@@ -92,6 +116,7 @@ private:
     float m_dpiScale = 1.0f;
     AspectMode m_aspectMode = AspectMode::Fit;
 
+#if defined(_WIN32)
     // Graphics handles
     ID3D11Device* m_d3dDevice = nullptr;
     ID3D11DeviceContext* m_d3dContext = nullptr;
@@ -101,6 +126,7 @@ private:
     IDCompositionVisual* m_dcompVisual = nullptr;
     ID2D1Factory2* m_d2dFactory = nullptr;
     ID2D1Device1* m_d2dDevice = nullptr;
+#endif
     ID2D1DeviceContext* m_d2dContext = nullptr;
     ID2D1Bitmap1* m_targetBitmap = nullptr;
     ID2D1SolidColorBrush* m_emptyPromptBrush = nullptr;

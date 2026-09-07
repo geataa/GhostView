@@ -1,5 +1,5 @@
 #pragma once
-#include <windows.h>
+#include "platform/PlatformDefs.h"
 #include <string>
 #include <vector>
 
@@ -26,10 +26,10 @@ public:
 
     static bool IsImageFile(const std::wstring& path);
 
+    void ScanFolder(const std::wstring& folder);
+
 private:
     std::wstring m_currentFolder;
     std::vector<std::wstring> m_files;
     size_t m_currentIndex = 0;
-
-    void ScanFolder(const std::wstring& folder);
 };

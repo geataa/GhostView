@@ -1,5 +1,5 @@
 #pragma once
-#include <windows.h>
+#include "platform/PlatformDefs.h"
 #include <string>
 
 enum class Language {

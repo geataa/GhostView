@@ -1,3 +1,4 @@
+#if defined(_WIN32)
 #include <windows.h>
 #include <shellapi.h>
 #include <string>
@@ -38,3 +39,21 @@ int WINAPI wWinMain(
 
     return app.Run();
 }
+#else
+#include "ViewerApp.h"
+#include <string>
+
+int main(int argc, char** argv) {
+    std::wstring initialFile = L"";
+    if (argc > 1) {
+        initialFile = Utf8ToWide(argv[1]);
+    }
+
+    ViewerApp app;
+    if (!app.Initialize(initialFile)) {
+        return 1;
+    }
+
+    return app.Run();
+}
+#endif

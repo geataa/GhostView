@@ -1,13 +1,27 @@
 #include "Localization.h"
+#include <cstring>
+#include <cstdlib>
 
 Language Localization::s_currentLang = Language::English;
 
 Language Localization::DetectSystemLanguage() {
+#if defined(_WIN32)
     LANGID langId = GetUserDefaultUILanguage();
     if (PRIMARYLANGID(langId) == LANG_TURKISH) {
         return Language::Turkish;
     }
     return Language::English;
+#else
+    const char* lang = getenv("LC_ALL");
+    if (!lang || !lang[0]) lang = getenv("LC_MESSAGES");
+    if (!lang || !lang[0]) lang = getenv("LANG");
+    if (lang) {
+        if (strstr(lang, "tr_") || strstr(lang, "tr.") || strstr(lang, "tr") == lang || strstr(lang, "turkish") || strstr(lang, "Turkish")) {
+            return Language::Turkish;
+        }
+    }
+    return Language::English;
+#endif
 }
 
 Language Localization::GetCurrentLanguage() {
