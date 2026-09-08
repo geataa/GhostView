@@ -17,17 +17,44 @@ echo "==================================================================="
 echo "  GhostView Linux Varsayılan Resim & GIF Görüntüleyici Kurulumu"
 echo "==================================================================="
 
-# 1. Binary Kontrolü (Derleme build.sh ile yapılmalıdır)
-if [ ! -f "$SCRIPT_DIR/GhostView" ]; then
-    echo "HATA: GhostView ikili dosyası bulunamadı!"
-    echo "Lütfen önce programı derleyin: ./build.sh"
+# 1. Derlenmiş GhostView programını bul
+TARGET_BIN=""
+if [ -n "$1" ] && [ -f "$1" ]; then
+    TARGET_BIN="$1"
+elif [ -f "$SCRIPT_DIR/GhostView" ]; then
+    TARGET_BIN="$SCRIPT_DIR/GhostView"
+elif [ -f "$SCRIPT_DIR/ghostview" ]; then
+    TARGET_BIN="$SCRIPT_DIR/ghostview"
+elif [ -f "./GhostView" ]; then
+    TARGET_BIN="./GhostView"
+elif [ -f "./ghostview" ]; then
+    TARGET_BIN="./ghostview"
+elif [ -f "$SCRIPT_DIR/bin/GhostView" ]; then
+    TARGET_BIN="$SCRIPT_DIR/bin/GhostView"
+elif [ -f "$SCRIPT_DIR/bin/ghostview" ]; then
+    TARGET_BIN="$SCRIPT_DIR/bin/ghostview"
+elif [ -f "$BIN_DEST/ghostview" ]; then
+    TARGET_BIN="$BIN_DEST/ghostview"
+fi
+
+if [ -z "$TARGET_BIN" ]; then
+    echo "==================================================================="
+    echo "  [UYARI] Derlenmiş 'GhostView' programı bulunamadı!"
+    echo ""
+    echo "  Lütfen önce programı derleyin (örn: ./build.sh) ya da"
+    echo "  derlenmiş ikili dosyayı bu klasöre koyun."
+    echo "==================================================================="
     exit 1
 fi
+
+echo "  -> Bulunan program: $TARGET_BIN"
 
 # 2. ~/.local/bin dizinine kopyalama
 echo "[1/4] Dosyalar yükleniyor..."
 mkdir -p "$BIN_DEST"
-cp -f "$SCRIPT_DIR/GhostView" "$BIN_DEST/ghostview"
+if [ "$TARGET_BIN" != "$BIN_DEST/ghostview" ]; then
+    cp -f "$TARGET_BIN" "$BIN_DEST/ghostview"
+fi
 chmod +x "$BIN_DEST/ghostview"
 ln -sf "$BIN_DEST/ghostview" "$BIN_DEST/GhostView"
 
