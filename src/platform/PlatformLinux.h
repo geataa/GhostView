@@ -38,6 +38,10 @@ public:
 
     void SetCursor(LinuxCursor cursor);
 
+    // Window dragging in windowed mode
+    void StartWindowDrag(int rootX = -1, int rootY = -1);
+    bool IsDraggingWindow() const { return m_isDraggingWindow; }
+
     // Dialogs
     std::wstring OpenFileDialog(const std::wstring& title);
     std::wstring SaveFileDialog(const std::wstring& title, const std::wstring& defaultExt = L"png");
@@ -64,8 +68,8 @@ private:
     int m_screen = 0;
     int m_width = 1920;
     int m_height = 1080;
-    int m_savedX = 100;
-    int m_savedY = 100;
+    int m_savedX = -1;
+    int m_savedY = -1;
     int m_savedWidth = 1280;
     int m_savedHeight = 720;
     int m_lastMonX = 0;
@@ -76,6 +80,16 @@ private:
     int m_lastClickButton = -1;
     float m_lastClickX = 0.0f;
     float m_lastClickY = 0.0f;
+    int m_lastClickRootX = 0;
+    int m_lastClickRootY = 0;
+    int m_lastRootX = 0;
+    int m_lastRootY = 0;
+    bool m_isDraggingWindow = false;
+    bool m_hasDraggedWindow = false;
+    int m_dragWinStartRootX = 0;
+    int m_dragWinStartRootY = 0;
+    int m_dragWinStartWinX = 0;
+    int m_dragWinStartWinY = 0;
     bool m_isFullscreen = false;
     bool m_shouldClose = false;
     uint32_t m_lastTick = 0;

@@ -2078,7 +2078,8 @@ LRESULT ViewerApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             return 0;
         }
 
-        if (!m_isFullscreen && !insideImage) {
+        bool isTopTitleBar = (mouseY <= 65.0f * m_dpiScale);
+        if (!m_isFullscreen && (isTopTitleBar || !insideImage)) {
             ReleaseCapture();
             SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
             return 0;
@@ -2376,7 +2377,7 @@ void ViewerApp::OnMouseMove(float mouseX, float mouseY) {
             else m_platform->SetCursor(LinuxCursor::Arrow);
         } else if (m_isErasing && IsPointInsideImage(mouseX, mouseY) && !m_hud.IsMouseOverHud(mouseX, mouseY) && !m_thumbBar.IsMouseOver(mouseX, mouseY)) {
             m_platform->SetCursor(LinuxCursor::Crosshair);
-        } else if (m_isDragging || (IsPointInsideImage(mouseX, mouseY) && !m_hud.IsMouseOverHud(mouseX, mouseY) && !m_thumbBar.IsMouseOver(mouseX, mouseY))) {
+        } else if (m_isDragging || (m_platform && m_platform->IsDraggingWindow()) || (IsPointInsideImage(mouseX, mouseY) && !m_hud.IsMouseOverHud(mouseX, mouseY) && !m_thumbBar.IsMouseOver(mouseX, mouseY))) {
             m_platform->SetCursor(LinuxCursor::Move4Way);
         } else {
             m_platform->SetCursor(LinuxCursor::Arrow);
@@ -2640,6 +2641,18 @@ void ViewerApp::OnMouseDown(int button, float mouseX, float mouseY, bool shift, 
         return;
     }
 
+    if (!m_isFullscreen) {
+        bool isTopTitleBar = (mouseY <= 65.0f * m_dpiScale);
+        if (isTopTitleBar || !insideImage) {
+#if !defined(_WIN32)
+            if (m_platform) {
+                m_platform->StartWindowDrag();
+            }
+#endif
+            return;
+        }
+    }
+
     m_isDragging = true;
     m_dragStartMouse.x = static_cast<LONG>(mouseX);
     m_dragStartMouse.y = static_cast<LONG>(mouseY);
@@ -2732,7 +2745,9 @@ void ViewerApp::OnMouseDoubleClick(int button, float mouseX, float mouseY) {
         return;
     }
 
-    if (IsPointInsideImage(mouseX, mouseY)) {
+    bool isTopTitleBar = (mouseY <= 65.0f * m_dpiScale);
+
+    if (!isTopTitleBar && IsPointInsideImage(mouseX, mouseY)) {
         SetActualSize(mouseX, mouseY);
         Render();
     } else {

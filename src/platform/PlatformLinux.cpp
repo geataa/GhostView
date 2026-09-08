@@ -103,6 +103,8 @@ extern "C" {
     int XChangeProperty(Display*, Window, Atom, Atom, int, int, const unsigned char*, int);
     int XSendEvent(Display*, Window, int, long, XEvent*);
     int XMoveResizeWindow(Display*, Window, int, int, unsigned int, unsigned int);
+    int XMoveWindow(Display*, Window, int, int);
+    int XTranslateCoordinates(Display*, Window, Window, int, int, int*, int*, Window*);
     int XFlush(Display*);
     int XSync(Display*, int);
     KeySym XLookupKeysym(XKeyEvent*, int);
@@ -409,15 +411,35 @@ void PlatformLinux::SetFullscreen(bool fullscreen) {
         int monX = m_lastMonX;
         int monY = m_lastMonY;
 
-        int winW = (std::min)(1280, static_cast<int>(monW * 0.85f));
-        int winH = (std::min)(760, static_cast<int>(monH * 0.85f));
-        int winX = monX + (monW - winW) / 2;
-        int winY = monY + (monH - winH) / 2;
+        int winW = (m_savedWidth > 0) ? m_savedWidth : (std::min)(1280, static_cast<int>(monW * 0.85f));
+        int winH = (m_savedHeight > 0) ? m_savedHeight : (std::min)(760, static_cast<int>(monH * 0.85f));
+        int winX = (m_savedX >= 0) ? m_savedX : (monX + (monW - winW) / 2);
+        int winY = (m_savedY >= 0) ? m_savedY : (monY + (monH - winH) / 2);
 
         XMoveResizeWindow(m_display, m_window, winX, winY, winW, winH);
     }
 
     XFlush(m_display);
+}
+
+void PlatformLinux::StartWindowDrag(int rootX, int rootY) {
+    if (!m_display || !m_window || m_isFullscreen) return;
+
+    if (rootX < 0 || rootY < 0) {
+        rootX = m_lastRootX;
+        rootY = m_lastRootY;
+    }
+
+    int absX = 0, absY = 0;
+    Window child = 0;
+    XTranslateCoordinates(m_display, m_window, XRootWindow(m_display, m_screen), 0, 0, &absX, &absY, &child);
+
+    m_isDraggingWindow = true;
+    m_hasDraggedWindow = false;
+    m_dragWinStartRootX = rootX;
+    m_dragWinStartRootY = rootY;
+    m_dragWinStartWinX = absX;
+    m_dragWinStartWinY = absY;
 }
 
 void PlatformLinux::GetWindowSize(int& outWidth, int& outHeight) const {
@@ -514,7 +536,24 @@ bool PlatformLinux::PollEvents() {
     bool hasMotion = false;
     float lastMotionX = 0.0f;
     float lastMotionY = 0.0f;
+    bool hasDragMotion = false;
+    int lastDragRootX = 0;
+    int lastDragRootY = 0;
     int eventsProcessed = 0;
+
+    auto applyDragMotion = [&]() {
+        if (hasDragMotion) {
+            int newWinX = m_dragWinStartWinX + (lastDragRootX - m_dragWinStartRootX);
+            int newWinY = m_dragWinStartWinY + (lastDragRootY - m_dragWinStartRootY);
+            XMoveWindow(m_display, m_window, newWinX, newWinY);
+            m_savedX = newWinX;
+            m_savedY = newWinY;
+            m_savedWidth = m_width;
+            m_savedHeight = m_height;
+            XFlush(m_display);
+            hasDragMotion = false;
+        }
+    };
 
     while (XPending(m_display) > 0) {
         XEvent ev;
@@ -534,6 +573,11 @@ bool PlatformLinux::PollEvents() {
                 m_lastMonH = ev.xconfigure.height;
                 m_lastMonX = ev.xconfigure.x;
                 m_lastMonY = ev.xconfigure.y;
+            } else if (!m_isDraggingWindow) {
+                m_savedX = ev.xconfigure.x;
+                m_savedY = ev.xconfigure.y;
+                m_savedWidth = ev.xconfigure.width;
+                m_savedHeight = ev.xconfigure.height;
             }
             if (ev.xconfigure.width != m_width || ev.xconfigure.height != m_height) {
                 m_width = ev.xconfigure.width;
@@ -545,12 +589,24 @@ bool PlatformLinux::PollEvents() {
             break;
 
         case MotionNotify:
+            if (m_isDraggingWindow) {
+                int dx = ev.xmotion.x_root - m_dragWinStartRootX;
+                int dy = ev.xmotion.y_root - m_dragWinStartRootY;
+                if (std::abs(dx) > 3 || std::abs(dy) > 3) {
+                    m_hasDraggedWindow = true;
+                    hasDragMotion = true;
+                    lastDragRootX = ev.xmotion.x_root;
+                    lastDragRootY = ev.xmotion.y_root;
+                }
+                break;
+            }
             hasMotion = true;
             lastMotionX = static_cast<float>(ev.xmotion.x);
             lastMotionY = static_cast<float>(ev.xmotion.y);
             break;
 
         case ButtonPress: {
+            applyDragMotion();
             if (hasMotion) {
                 if (onMouseMove) onMouseMove(lastMotionX, lastMotionY);
                 hasMotion = false;
@@ -558,6 +614,8 @@ bool PlatformLinux::PollEvents() {
 
             float mx = static_cast<float>(ev.xbutton.x);
             float my = static_cast<float>(ev.xbutton.y);
+            m_lastRootX = ev.xbutton.x_root;
+            m_lastRootY = ev.xbutton.y_root;
             bool shift = (ev.xbutton.state & ShiftMask) != 0;
             bool ctrl = (ev.xbutton.state & ControlMask) != 0;
             bool alt = (ev.xbutton.state & Mod1Mask) != 0;
@@ -567,8 +625,8 @@ bool PlatformLinux::PollEvents() {
                 bool isDblClick = false;
                 if (m_lastClickButton == 1 &&
                     (now - m_lastClickTime) <= 400 &&
-                    std::abs(mx - m_lastClickX) < 10.0f &&
-                    std::abs(my - m_lastClickY) < 10.0f) {
+                    std::abs(ev.xbutton.x_root - m_lastClickRootX) < 12 &&
+                    std::abs(ev.xbutton.y_root - m_lastClickRootY) < 12) {
                     isDblClick = true;
                     m_lastClickTime = 0;
                     m_lastClickButton = -1;
@@ -577,6 +635,8 @@ bool PlatformLinux::PollEvents() {
                     m_lastClickButton = 1;
                     m_lastClickX = mx;
                     m_lastClickY = my;
+                    m_lastClickRootX = ev.xbutton.x_root;
+                    m_lastClickRootY = ev.xbutton.y_root;
                 }
 
                 if (isDblClick) {
@@ -595,9 +655,19 @@ bool PlatformLinux::PollEvents() {
         }
 
         case ButtonRelease: {
+            applyDragMotion();
             if (hasMotion) {
                 if (onMouseMove) onMouseMove(lastMotionX, lastMotionY);
                 hasMotion = false;
+            }
+
+            if (m_isDraggingWindow) {
+                m_isDraggingWindow = false;
+                if (m_hasDraggedWindow) {
+                    m_lastClickTime = 0;
+                    m_lastClickButton = -1;
+                    m_hasDraggedWindow = false;
+                }
             }
 
             float mx = static_cast<float>(ev.xbutton.x);
@@ -611,6 +681,7 @@ bool PlatformLinux::PollEvents() {
         }
 
         case KeyPress: {
+            applyDragMotion();
             if (hasMotion) {
                 if (onMouseMove) onMouseMove(lastMotionX, lastMotionY);
                 hasMotion = false;
@@ -657,6 +728,8 @@ bool PlatformLinux::PollEvents() {
         }
         }
     }
+
+    applyDragMotion();
 
     // Deliver the coalesced motion event (once per event loop tick)
     if (hasMotion) {
