@@ -143,6 +143,8 @@ extern "C" {
 #define PointerMotionMask (1L<<6)
 #define ExposureMask (1L<<15)
 #define StructureNotifyMask (1L<<17)
+#define SubstructureNotifyMask (1L<<19)
+#define SubstructureRedirectMask (1L<<20)
 
 #define KeyPress 2
 #define KeyRelease 3
@@ -394,7 +396,7 @@ void PlatformLinux::SetFullscreen(bool fullscreen) {
     xclient.data.l[3] = 1;
 
     Window root = XRootWindow(m_display, m_screen);
-    XSendEvent(m_display, root, 0, StructureNotifyMask, (XEvent*)&xclient);
+    XSendEvent(m_display, root, 0, SubstructureNotifyMask | SubstructureRedirectMask, (XEvent*)&xclient);
 
     // Keep compositor active in fullscreen so background remains transparent
     Atom bypassAtom = XInternAtom(m_display, "_NET_WM_BYPASS_COMPOSITOR", 0);
@@ -402,12 +404,16 @@ void PlatformLinux::SetFullscreen(bool fullscreen) {
     XChangeProperty(m_display, m_window, bypassAtom, 6 /* XA_CARDINAL */, 32, 0, (unsigned char*)&bypassVal, 1);
 
     if (!fullscreen) {
-        int dispW = XDisplayWidth(m_display, m_screen);
-        int dispH = XDisplayHeight(m_display, m_screen);
-        int winW = (std::min)(1280, static_cast<int>(dispW * 0.8f));
-        int winH = (std::min)(720, static_cast<int>(dispH * 0.8f));
-        int winX = (dispW - winW) / 2;
-        int winY = (dispH - winH) / 2;
+        int monW = (m_lastMonW > 0) ? m_lastMonW : XDisplayWidth(m_display, m_screen);
+        int monH = (m_lastMonH > 0) ? m_lastMonH : XDisplayHeight(m_display, m_screen);
+        int monX = m_lastMonX;
+        int monY = m_lastMonY;
+
+        int winW = (std::min)(1280, static_cast<int>(monW * 0.85f));
+        int winH = (std::min)(760, static_cast<int>(monH * 0.85f));
+        int winX = monX + (monW - winW) / 2;
+        int winY = monY + (monH - winH) / 2;
+
         XMoveResizeWindow(m_display, m_window, winX, winY, winW, winH);
     }
 
@@ -523,6 +529,12 @@ bool PlatformLinux::PollEvents() {
             break;
 
         case ConfigureNotify:
+            if (m_isFullscreen) {
+                m_lastMonW = ev.xconfigure.width;
+                m_lastMonH = ev.xconfigure.height;
+                m_lastMonX = ev.xconfigure.x;
+                m_lastMonY = ev.xconfigure.y;
+            }
             if (ev.xconfigure.width != m_width || ev.xconfigure.height != m_height) {
                 m_width = ev.xconfigure.width;
                 m_height = ev.xconfigure.height;
@@ -551,7 +563,27 @@ bool PlatformLinux::PollEvents() {
             bool alt = (ev.xbutton.state & Mod1Mask) != 0;
 
             if (ev.xbutton.button == 1) { // Left
-                if (onMouseDown) onMouseDown(0, mx, my, shift, alt, ctrl);
+                uint32_t now = ev.xbutton.time;
+                bool isDblClick = false;
+                if (m_lastClickButton == 1 &&
+                    (now - m_lastClickTime) <= 400 &&
+                    std::abs(mx - m_lastClickX) < 10.0f &&
+                    std::abs(my - m_lastClickY) < 10.0f) {
+                    isDblClick = true;
+                    m_lastClickTime = 0;
+                    m_lastClickButton = -1;
+                } else {
+                    m_lastClickTime = now;
+                    m_lastClickButton = 1;
+                    m_lastClickX = mx;
+                    m_lastClickY = my;
+                }
+
+                if (isDblClick) {
+                    if (onMouseDoubleClick) onMouseDoubleClick(0, mx, my);
+                } else {
+                    if (onMouseDown) onMouseDown(0, mx, my, shift, alt, ctrl);
+                }
             } else if (ev.xbutton.button == 3) { // Right
                 if (onMouseDown) onMouseDown(1, mx, my, shift, alt, ctrl);
             } else if (ev.xbutton.button == 4) { // Wheel Up

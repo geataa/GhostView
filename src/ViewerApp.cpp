@@ -614,6 +614,10 @@ bool ViewerApp::Initialize(const std::wstring& initialFile) {
         OnMouseUp(b, x, y);
     };
 
+    m_platform->onMouseDoubleClick = [this](int b, float x, float y) {
+        OnMouseDoubleClick(b, x, y);
+    };
+
     m_platform->onMouseWheel = [this](short d, float x, float y, bool shift, bool alt, bool ctrl) {
         OnMouseWheel(d, x, y, shift, alt, ctrl);
     };
@@ -2163,22 +2167,7 @@ LRESULT ViewerApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
     case WM_LBUTTONDBLCLK: {
         float mouseX = static_cast<float>(GET_X_LPARAM(lParam));
         float mouseY = static_cast<float>(GET_Y_LPARAM(lParam));
-
-        if (m_hud.IsMouseOverHud(mouseX, mouseY) || m_thumbBar.IsMouseOver(mouseX, mouseY) || (m_isCropping && m_cropToolbar.IsMouseOver(mouseX, mouseY))) {
-            return 0;
-        }
-
-        if (m_isCropping) {
-            ApplyCrop();
-            return 0;
-        }
-
-        if (IsPointInsideImage(mouseX, mouseY)) {
-            SetActualSize(mouseX, mouseY);
-            Render();
-        } else {
-            ToggleFullscreen();
-        }
+        OnMouseDoubleClick(0, mouseX, mouseY);
         return 0;
     }
 
@@ -2728,6 +2717,26 @@ void ViewerApp::OnMouseUp(int button, float mouseX, float mouseY) {
     if (m_hud.NeedsRedraw()) {
         m_hud.ClearNeedsRedraw();
         Render();
+    }
+}
+
+void ViewerApp::OnMouseDoubleClick(int button, float mouseX, float mouseY) {
+    if (button != 0) return;
+
+    if (m_hud.IsMouseOverHud(mouseX, mouseY) || m_thumbBar.IsMouseOver(mouseX, mouseY) || (m_isCropping && m_cropToolbar.IsMouseOver(mouseX, mouseY))) {
+        return;
+    }
+
+    if (m_isCropping) {
+        ApplyCrop();
+        return;
+    }
+
+    if (IsPointInsideImage(mouseX, mouseY)) {
+        SetActualSize(mouseX, mouseY);
+        Render();
+    } else {
+        ToggleFullscreen();
     }
 }
 

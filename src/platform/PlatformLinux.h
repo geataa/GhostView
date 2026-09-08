@@ -52,6 +52,7 @@ public:
     std::function<void(float x, float y)> onMouseMove;
     std::function<void(int button, float x, float y, bool shift, bool alt, bool ctrl)> onMouseDown;
     std::function<void(int button, float x, float y)> onMouseUp;
+    std::function<void(int button, float x, float y)> onMouseDoubleClick;
     std::function<void(short delta, float x, float y, bool shift, bool alt, bool ctrl)> onMouseWheel;
     std::function<void(int keyCode, wchar_t keyChar, bool shift, bool alt, bool ctrl)> onKeyDown;
     std::function<void(const std::wstring& filePath)> onFileDrop;
@@ -67,6 +68,14 @@ private:
     int m_savedY = 100;
     int m_savedWidth = 1280;
     int m_savedHeight = 720;
+    int m_lastMonX = 0;
+    int m_lastMonY = 0;
+    int m_lastMonW = 0;
+    int m_lastMonH = 0;
+    uint32_t m_lastClickTime = 0;
+    int m_lastClickButton = -1;
+    float m_lastClickX = 0.0f;
+    float m_lastClickY = 0.0f;
     bool m_isFullscreen = false;
     bool m_shouldClose = false;
     uint32_t m_lastTick = 0;

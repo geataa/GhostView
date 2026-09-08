@@ -218,9 +218,13 @@ void HudRenderer::LayoutButtons(float screenWidth, float screenHeight) {
         { HudAction::RotateLeft,       L"\x21BA",       Localization::Get(StringId::TooltipRotateLeft), 40.0f },
         { HudAction::RotateRight,      L"\x21BB",       Localization::Get(StringId::TooltipRotateRight), 40.0f },
         { HudAction::Crop,             L"\x2702",       Localization::Get(StringId::TooltipCrop), 44.0f },
-        { HudAction::MagicErase,       L"\x2728",       Localization::Get(StringId::TooltipMagicErase), 44.0f },
+        { HudAction::MagicErase,       L"\x2726",       Localization::Get(StringId::TooltipMagicErase), 44.0f },
         { HudAction::Undo,             L"\x21A9",       Localization::Get(StringId::TooltipUndo), 44.0f },
+#if defined(_WIN32)
         { HudAction::SaveAs,           L"\xE105",       Localization::Get(StringId::TooltipSaveAs), 44.0f },
+#else
+        { HudAction::SaveAs,           L"\x21E9",       Localization::Get(StringId::TooltipSaveAs), 44.0f },
+#endif
         { HudAction::ToggleLanguage,   Localization::GetLanguageCode(), Localization::Get(StringId::TooltipLanguage), 44.0f },
         { HudAction::ToggleFullscreen, fsIcon,          Localization::Get(StringId::TooltipFullscreen), 42.0f },
         { HudAction::Close,            L"\x2715",       Localization::Get(StringId::TooltipClose), 42.0f }

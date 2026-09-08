@@ -40,6 +40,7 @@ public:
     void OnMouseMove(float mouseX, float mouseY);
     void OnMouseDown(int button, float mouseX, float mouseY, bool shift, bool alt, bool ctrl);
     void OnMouseUp(int button, float mouseX, float mouseY);
+    void OnMouseDoubleClick(int button, float mouseX, float mouseY);
     void OnMouseWheel(short delta, float mouseX, float mouseY, bool shift = false, bool alt = false, bool ctrl = false);
     void OnKeyDown(int keyCode, wchar_t keyChar, bool shift, bool alt, bool ctrl);
     void OnUpdate(float dt);
