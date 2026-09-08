@@ -17,12 +17,15 @@ echo "==================================================================="
 echo "  GhostView Linux Varsayılan Resim & GIF Görüntüleyici Kurulumu"
 echo "==================================================================="
 
-# 1. Binary Derleme Kontrolü
-echo "[1/5] GhostView derleniyor (make)..."
-make -C "$SCRIPT_DIR" -j$(nproc 2>/dev/null || echo 2)
+# 1. Binary Kontrolü (Derleme build.sh ile yapılmalıdır)
+if [ ! -f "$SCRIPT_DIR/GhostView" ]; then
+    echo "HATA: GhostView ikili dosyası bulunamadı!"
+    echo "Lütfen önce programı derleyin: ./build.sh"
+    exit 1
+fi
 
 # 2. ~/.local/bin dizinine kopyalama
-echo "[2/5] Dosyalar yükleniyor..."
+echo "[1/4] Dosyalar yükleniyor..."
 mkdir -p "$BIN_DEST"
 cp -f "$SCRIPT_DIR/GhostView" "$BIN_DEST/ghostview"
 chmod +x "$BIN_DEST/ghostview"
@@ -43,7 +46,7 @@ img.save('$PIXMAP_DEST/ghostview.png')
 fi
 
 # 4. .desktop Girişi Oluşturma
-echo "[3/5] Masaüstü entegrasyonu (ghostview.desktop) oluşturuluyor..."
+echo "[2/4] Masaüstü entegrasyonu (ghostview.desktop) oluşturuluyor..."
 mkdir -p "$APP_DEST"
 
 MIME_LIST="image/gif;image/png;image/jpeg;image/jpg;image/pjpeg;image/bmp;image/x-bmp;image/x-ms-bmp;image/webp;image/tiff;image/x-tiff;image/vnd.microsoft.icon;image/x-icon;image/x-ico;image/x-tga;image/x-pcx;image/x-portable-anymap;image/x-portable-bitmap;image/x-portable-graymap;image/x-portable-pixmap;image/x-xbitmap;image/x-xpixmap;"
@@ -73,7 +76,7 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 
 # 5. MIME İlişkilendirmelerini Tanımlama (xdg-mime + mimeapps.list)
-echo "[4/5] GIF dahil tüm resim formatları GhostView ile ilişkilendiriliyor..."
+echo "[3/4] GIF dahil tüm resim formatları GhostView ile ilişkilendiriliyor..."
 
 MIME_ARRAY=(
     "image/gif"
@@ -140,7 +143,7 @@ for mime in "${MIME_ARRAY[@]}"; do
     fi
 done
 
-echo "[5/5] Doğrulanıyor..."
+echo "[4/4] Doğrulanıyor..."
 if command -v xdg-mime >/dev/null 2>&1; then
     DEF_GIF=$(xdg-mime query default image/gif 2>/dev/null || echo "ghostview.desktop")
     DEF_PNG=$(xdg-mime query default image/png 2>/dev/null || echo "ghostview.desktop")
