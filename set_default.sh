@@ -18,12 +18,8 @@ echo "  GhostView Linux Varsayılan Resim & GIF Görüntüleyici Kurulumu"
 echo "==================================================================="
 
 # 1. Binary Derleme Kontrolü
-if [ ! -f "$SCRIPT_DIR/GhostView" ]; then
-    echo "[1/5] GhostView derleniyor (make)..."
-    make -C "$SCRIPT_DIR" -j$(nproc 2>/dev/null || echo 2)
-else
-    echo "[1/5] GhostView çalıştırılabilir dosyası mevcut."
-fi
+echo "[1/5] GhostView derleniyor (make)..."
+make -C "$SCRIPT_DIR" -j$(nproc 2>/dev/null || echo 2)
 
 # 2. ~/.local/bin dizinine kopyalama
 echo "[2/5] Dosyalar yükleniyor..."

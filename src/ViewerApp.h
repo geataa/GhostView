@@ -40,7 +40,7 @@ public:
     void OnMouseMove(float mouseX, float mouseY);
     void OnMouseDown(int button, float mouseX, float mouseY, bool shift, bool alt, bool ctrl);
     void OnMouseUp(int button, float mouseX, float mouseY);
-    void OnMouseWheel(short delta, float mouseX, float mouseY);
+    void OnMouseWheel(short delta, float mouseX, float mouseY, bool shift = false, bool alt = false, bool ctrl = false);
     void OnKeyDown(int keyCode, wchar_t keyChar, bool shift, bool alt, bool ctrl);
     void OnUpdate(float dt);
 
@@ -186,7 +186,7 @@ private:
     float m_panX = 0.0f;
     float m_panY = 0.0f;
     float m_rotation = 0.0f; // degrees (0, 90, 180, 270)
-    float m_bgOpacity = 0.78f; // 78% dark overlay, like Picasa
+    float m_bgOpacity = 0.45f; // 45% dark overlay (translucent glass lightbox)
 
     // Mouse drag & hover state
     bool m_isDragging = false;

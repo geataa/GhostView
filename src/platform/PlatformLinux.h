@@ -52,7 +52,7 @@ public:
     std::function<void(float x, float y)> onMouseMove;
     std::function<void(int button, float x, float y, bool shift, bool alt, bool ctrl)> onMouseDown;
     std::function<void(int button, float x, float y)> onMouseUp;
-    std::function<void(short delta, float x, float y)> onMouseWheel;
+    std::function<void(short delta, float x, float y, bool shift, bool alt, bool ctrl)> onMouseWheel;
     std::function<void(int keyCode, wchar_t keyChar, bool shift, bool alt, bool ctrl)> onKeyDown;
     std::function<void(const std::wstring& filePath)> onFileDrop;
 

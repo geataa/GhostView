@@ -614,8 +614,8 @@ bool ViewerApp::Initialize(const std::wstring& initialFile) {
         OnMouseUp(b, x, y);
     };
 
-    m_platform->onMouseWheel = [this](short d, float x, float y) {
-        OnMouseWheel(d, x, y);
+    m_platform->onMouseWheel = [this](short d, float x, float y, bool shift, bool alt, bool ctrl) {
+        OnMouseWheel(d, x, y, shift, alt, ctrl);
     };
 
     m_platform->onKeyDown = [this](int k, wchar_t c, bool s, bool a, bool ct) {
@@ -2187,16 +2187,11 @@ LRESULT ViewerApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         ScreenToClient(hwnd, &pt);
 
         short delta = GET_WHEEL_DELTA_WPARAM(wParam);
+        bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
 
-        if (m_thumbBar.IsMouseOver(static_cast<float>(pt.x), static_cast<float>(pt.y))) {
-            m_thumbBar.OnMouseWheel(delta, static_cast<float>(m_screenWidth));
-            m_hud.ResetIdleTimer();
-            Render();
-            return 0;
-        }
-
-        float factor = (delta > 0) ? 1.15f : (1.0f / 1.15f);
-        ZoomAt(factor, static_cast<float>(pt.x), static_cast<float>(pt.y));
+        OnMouseWheel(delta, static_cast<float>(pt.x), static_cast<float>(pt.y), shift, alt, ctrl);
         return 0;
     }
 
@@ -2300,11 +2295,19 @@ LRESULT ViewerApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             LastImage();
             return 0;
         case VK_OEM_4: // '[' - decrease darkness (more transparent)
-            m_bgOpacity = (std::max)(0.10f, m_bgOpacity - 0.05f);
+            m_bgOpacity = (std::max)(0.05f, m_bgOpacity - 0.05f);
+            m_hud.ShowToast(Localization::GetCurrentLanguage() == Language::Turkish ?
+                (L"Saydamlık: %" + std::to_wstring(static_cast<int>((1.0f - m_bgOpacity) * 100.0f + 0.5f))) :
+                (L"Transparency: " + std::to_wstring(static_cast<int>((1.0f - m_bgOpacity) * 100.0f + 0.5f)) + L"%"));
+            SaveSettings();
             Render();
             return 0;
         case VK_OEM_6: // ']' - increase darkness
-            m_bgOpacity = (std::min)(0.98f, m_bgOpacity + 0.05f);
+            m_bgOpacity = (std::min)(0.95f, m_bgOpacity + 0.05f);
+            m_hud.ShowToast(Localization::GetCurrentLanguage() == Language::Turkish ?
+                (L"Saydamlık: %" + std::to_wstring(static_cast<int>((1.0f - m_bgOpacity) * 100.0f + 0.5f))) :
+                (L"Transparency: " + std::to_wstring(static_cast<int>((1.0f - m_bgOpacity) * 100.0f + 0.5f)) + L"%"));
+            SaveSettings();
             Render();
             return 0;
         }
@@ -2728,10 +2731,23 @@ void ViewerApp::OnMouseUp(int button, float mouseX, float mouseY) {
     }
 }
 
-void ViewerApp::OnMouseWheel(short delta, float mouseX, float mouseY) {
+void ViewerApp::OnMouseWheel(short delta, float mouseX, float mouseY, bool shift, bool alt, bool ctrl) {
+    (void)shift;
+    (void)alt;
     if (m_thumbBar.IsMouseOver(mouseX, mouseY)) {
         m_thumbBar.OnMouseWheel(delta, static_cast<float>(m_screenWidth));
         m_hud.ResetIdleTimer();
+        Render();
+        return;
+    }
+
+    if (ctrl) {
+        float step = (delta > 0) ? -0.05f : 0.05f;
+        m_bgOpacity = std::clamp(m_bgOpacity + step, 0.05f, 0.95f);
+        m_hud.ShowToast(Localization::GetCurrentLanguage() == Language::Turkish ?
+            (L"Saydamlık: %" + std::to_wstring(static_cast<int>((1.0f - m_bgOpacity) * 100.0f + 0.5f))) :
+            (L"Transparency: " + std::to_wstring(static_cast<int>((1.0f - m_bgOpacity) * 100.0f + 0.5f)) + L"%"));
+        SaveSettings();
         Render();
         return;
     }
@@ -2847,11 +2863,19 @@ void ViewerApp::OnKeyDown(int keyCode, wchar_t keyChar, bool shift, bool alt, bo
         return;
     }
 
-    if (keyChar == L'[') {
-        m_bgOpacity = (std::max)(0.10f, m_bgOpacity - 0.05f);
+    if (keyChar == L'[' || keyCode == 219) {
+        m_bgOpacity = (std::max)(0.05f, m_bgOpacity - 0.05f);
+        m_hud.ShowToast(Localization::GetCurrentLanguage() == Language::Turkish ?
+            (L"Saydamlık: %" + std::to_wstring(static_cast<int>((1.0f - m_bgOpacity) * 100.0f + 0.5f))) :
+            (L"Transparency: " + std::to_wstring(static_cast<int>((1.0f - m_bgOpacity) * 100.0f + 0.5f)) + L"%"));
+        SaveSettings();
         Render();
-    } else if (keyChar == L']') {
-        m_bgOpacity = (std::min)(0.98f, m_bgOpacity + 0.05f);
+    } else if (keyChar == L']' || keyCode == 221) {
+        m_bgOpacity = (std::min)(0.95f, m_bgOpacity + 0.05f);
+        m_hud.ShowToast(Localization::GetCurrentLanguage() == Language::Turkish ?
+            (L"Saydamlık: %" + std::to_wstring(static_cast<int>((1.0f - m_bgOpacity) * 100.0f + 0.5f))) :
+            (L"Transparency: " + std::to_wstring(static_cast<int>((1.0f - m_bgOpacity) * 100.0f + 0.5f)) + L"%"));
+        SaveSettings();
         Render();
     }
 }

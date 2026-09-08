@@ -316,11 +316,21 @@ bool PlatformLinux::Initialize(int width, int height, bool fullscreen) {
     Atom wmDelete = XInternAtom(m_display, "WM_DELETE_WINDOW", 0);
     XSetWMProtocols(m_display, m_window, &wmDelete, 1);
 
-    // Fullscreen property if requested
+    // Set window type to NORMAL
+    Atom typeAtom = XInternAtom(m_display, "_NET_WM_WINDOW_TYPE", 0);
+    Atom typeNormal = XInternAtom(m_display, "_NET_WM_WINDOW_TYPE_NORMAL", 0);
+    XChangeProperty(m_display, m_window, typeAtom, 4 /* XA_ATOM */, 32, 0, (unsigned char*)&typeNormal, 1);
+
+    // Fullscreen and Topmost properties if requested
+    Atom wmState = XInternAtom(m_display, "_NET_WM_STATE", 0);
     if (fullscreen) {
-        Atom wmState = XInternAtom(m_display, "_NET_WM_STATE", 0);
-        Atom wmFullscreen = XInternAtom(m_display, "_NET_WM_STATE_FULLSCREEN", 0);
-        XChangeProperty(m_display, m_window, wmState, 4 /* XA_ATOM */, 32, 0, (unsigned char*)&wmFullscreen, 1);
+        Atom atoms[2];
+        atoms[0] = XInternAtom(m_display, "_NET_WM_STATE_FULLSCREEN", 0);
+        atoms[1] = XInternAtom(m_display, "_NET_WM_STATE_ABOVE", 0);
+        XChangeProperty(m_display, m_window, wmState, 4 /* XA_ATOM */, 32, 0, (unsigned char*)atoms, 2);
+    } else {
+        Atom wmAbove = XInternAtom(m_display, "_NET_WM_STATE_ABOVE", 0);
+        XChangeProperty(m_display, m_window, wmState, 4 /* XA_ATOM */, 32, 0, (unsigned char*)&wmAbove, 1);
     }
 
     XStoreName(m_display, m_window, "GhostView");
@@ -390,6 +400,16 @@ void PlatformLinux::SetFullscreen(bool fullscreen) {
     Atom bypassAtom = XInternAtom(m_display, "_NET_WM_BYPASS_COMPOSITOR", 0);
     unsigned long bypassVal = 2; // 2 = Don't bypass compositor
     XChangeProperty(m_display, m_window, bypassAtom, 6 /* XA_CARDINAL */, 32, 0, (unsigned char*)&bypassVal, 1);
+
+    if (!fullscreen) {
+        int dispW = XDisplayWidth(m_display, m_screen);
+        int dispH = XDisplayHeight(m_display, m_screen);
+        int winW = (std::min)(1280, static_cast<int>(dispW * 0.8f));
+        int winH = (std::min)(720, static_cast<int>(dispH * 0.8f));
+        int winX = (dispW - winW) / 2;
+        int winY = (dispH - winH) / 2;
+        XMoveResizeWindow(m_display, m_window, winX, winY, winW, winH);
+    }
 
     XFlush(m_display);
 }
@@ -485,9 +505,15 @@ bool PlatformLinux::PollEvents() {
         onUpdate(dt);
     }
 
+    bool hasMotion = false;
+    float lastMotionX = 0.0f;
+    float lastMotionY = 0.0f;
+    int eventsProcessed = 0;
+
     while (XPending(m_display) > 0) {
         XEvent ev;
         XNextEvent(m_display, &ev);
+        eventsProcessed++;
 
         switch (ev.type) {
         case Expose:
@@ -507,12 +533,17 @@ bool PlatformLinux::PollEvents() {
             break;
 
         case MotionNotify:
-            if (onMouseMove) {
-                onMouseMove(static_cast<float>(ev.xmotion.x), static_cast<float>(ev.xmotion.y));
-            }
+            hasMotion = true;
+            lastMotionX = static_cast<float>(ev.xmotion.x);
+            lastMotionY = static_cast<float>(ev.xmotion.y);
             break;
 
         case ButtonPress: {
+            if (hasMotion) {
+                if (onMouseMove) onMouseMove(lastMotionX, lastMotionY);
+                hasMotion = false;
+            }
+
             float mx = static_cast<float>(ev.xbutton.x);
             float my = static_cast<float>(ev.xbutton.y);
             bool shift = (ev.xbutton.state & ShiftMask) != 0;
@@ -524,14 +555,19 @@ bool PlatformLinux::PollEvents() {
             } else if (ev.xbutton.button == 3) { // Right
                 if (onMouseDown) onMouseDown(1, mx, my, shift, alt, ctrl);
             } else if (ev.xbutton.button == 4) { // Wheel Up
-                if (onMouseWheel) onMouseWheel(120, mx, my);
+                if (onMouseWheel) onMouseWheel(120, mx, my, shift, alt, ctrl);
             } else if (ev.xbutton.button == 5) { // Wheel Down
-                if (onMouseWheel) onMouseWheel(-120, mx, my);
+                if (onMouseWheel) onMouseWheel(-120, mx, my, shift, alt, ctrl);
             }
             break;
         }
 
         case ButtonRelease: {
+            if (hasMotion) {
+                if (onMouseMove) onMouseMove(lastMotionX, lastMotionY);
+                hasMotion = false;
+            }
+
             float mx = static_cast<float>(ev.xbutton.x);
             float my = static_cast<float>(ev.xbutton.y);
             if (ev.xbutton.button == 1) {
@@ -543,6 +579,11 @@ bool PlatformLinux::PollEvents() {
         }
 
         case KeyPress: {
+            if (hasMotion) {
+                if (onMouseMove) onMouseMove(lastMotionX, lastMotionY);
+                hasMotion = false;
+            }
+
             KeySym sym = XLookupKeysym(&ev.xkey, 0);
             bool shift = (ev.xkey.state & ShiftMask) != 0;
             bool ctrl = (ev.xkey.state & ControlMask) != 0;
@@ -585,8 +626,18 @@ bool PlatformLinux::PollEvents() {
         }
     }
 
-    // Small sleep to yield CPU (~100 FPS cap)
-    usleep(10000);
+    // Deliver the coalesced motion event (once per event loop tick)
+    if (hasMotion) {
+        if (onMouseMove) {
+            onMouseMove(lastMotionX, lastMotionY);
+        }
+    }
+
+    // Only sleep when completely idle to yield CPU (~0% CPU when stationary, 60+ FPS when interacting)
+    if (eventsProcessed == 0) {
+        usleep(2000);
+    }
+
     return true;
 }
 
