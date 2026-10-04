@@ -136,6 +136,34 @@ Output: `GhostView.exe` (~370 KB standalone portable executable).
 
 ---
 
+## 🎮 Also From SkySoft / geataa on Steam
+
+I'm a game developer first — GhostView and my other tools are what I build in the time left over from making games (*oyunlardan arda kalan zamanda bunları yapıyorum :D*). Check out my published titles on Steam:
+
+<div align="center">
+
+### 🧗 [BouncyClimb](https://store.steampowered.com/app/4787630/)
+*A high-octane, physics-defying multiplayer climbing and platforming adventure! Race against your friends, scale hazardous heights, and master the bounce.*
+
+[![Play BouncyClimb on Steam](https://img.shields.io/badge/Steam-BouncyClimb-1b2838?style=for-the-badge&logo=steam&logoColor=white)](https://store.steampowered.com/app/4787630/)
+
+---
+
+### 🍸 [Neon Angora](https://store.steampowered.com/app/4447940/)
+*A groundbreaking social simulation and nightclub roleplaying experience powered by Local LLM AI. No canned dialogue trees—speak your mind, influence dynamic NPCs, uncover secrets, and experience a living story that reacts to who you choose to be.*
+
+[![Play Neon Angora on Steam](https://img.shields.io/badge/Steam-Neon%20Angora-1b2838?style=for-the-badge&logo=steam&logoColor=white)](https://store.steampowered.com/app/4447940/)
+
+</div>
+
+---
+
 ## 📄 License
 
 MIT License © 2026 GhostView Contributors
+
+---
+
+<p align="center">
+  Crafted with ❤️, C++17, and Vibe Coding by <b>SkySoft / geataa</b>.
+</p>
